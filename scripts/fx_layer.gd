@@ -1,10 +1,19 @@
 extends Node2D
+## Ground fire, shots, and skill shapes. One shared 8-point blob.
+## No per-flame buffer, particle, or extra canvas item.
 
 var sim: Node = null
 var _font: Font
 var _drawing := false
 var _dot := PackedVector2Array([
 	Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, Vector2.ZERO,
+	Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, Vector2.ZERO,
+])
+var _quad := PackedVector2Array([Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, Vector2.ZERO])
+var _tri := PackedVector2Array([Vector2.ZERO, Vector2.ZERO, Vector2.ZERO])
+var _pent := PackedVector2Array([Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, Vector2.ZERO])
+var _loop := PackedVector2Array([
+	Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, Vector2.ZERO,
 	Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, Vector2.ZERO,
 ])
 
@@ -54,51 +63,36 @@ func _blob(at: Vector2, radius: float, color: Color) -> void:
 	draw_colored_polygon(_dot, color)
 
 
+func _ring(at: Vector2, radius: float, color: Color, width: float) -> void:
+	for i in 8:
+		_loop[i] = at + _circle[i] * radius
+	_loop[8] = _loop[0]
+	draw_polyline(_loop, color, width, true)
+
+
 func _draw() -> void:
 	if sim == null or sim.get("phase") == "boot":
 		return
 	for f in sim.fires:
-		var a := clampf(float(f.t) / 2.4, 0.0, 1.0)
-		_blob(f.pos, float(f.r), Color(1.0, 0.42, 0.08, 0.62 * a))
+		_fire(f)
 	for s in sim.shots:
 		if s.kind == "fireball":
-			_blob(s.pos, 0.28, Color(1.0, 0.45, 0.08, 0.9))
+			_fireball(s)
 		elif s.kind == "gem":
-			var gem: Vector2 = s.pos
-			draw_colored_polygon(PackedVector2Array([
-				gem + Vector2(0.0, -0.24),
-				gem + Vector2(0.16, 0.0),
-				gem + Vector2(0.0, 0.24),
-				gem + Vector2(-0.16, 0.0)
-			]), Color(0.72, 0.96, 1.0, 0.95))
+			_gem(s.pos)
 	for u in sim.units:
 		if u.channel == null:
 			continue
 		if u.channel.kind == "mega":
-			var pulse := 0.92 + 0.08 * sin(float(sim.time) * 10.0)
-			draw_circle(u.channel.pos, float(u.channel.r) * pulse, Color(1.0, 0.22, 0.18, 0.2))
-			draw_circle(u.channel.pos, float(u.channel.r) * 0.45, Color(1.0, 0.55, 0.2, 0.18))
-			draw_arc(u.channel.pos, float(u.channel.r), 0.0, TAU, 48, Color(1.0, 0.25, 0.15, 0.95), 0.2, true)
-			draw_arc(u.channel.pos, float(u.channel.r) * 0.72, 0.0, TAU, 32, Color(1.0, 0.85, 0.45, 0.7), 0.05, true)
+			_mega_zone(u.channel.pos, float(u.channel.r), 0.96 + 0.04 * sin(float(sim.time) * 8.0), 1.0)
 		elif u.channel.kind == "saber":
-			var poly := _saber_poly(u.channel)
-			draw_colored_polygon(poly, Color(1.0, 0.92, 0.4, 0.28))
-			var loop := PackedVector2Array([poly[0], poly[1], poly[2], poly[3], poly[0]])
-			draw_polyline(loop, Color(1.0, 0.86, 0.15, 0.95), 0.16, true)
-			var mid_a := (poly[0] + poly[3]) * 0.5
-			var mid_b := (poly[1] + poly[2]) * 0.5
-			draw_line(mid_a, mid_b, Color(1.0, 1.0, 0.85, 0.95), 0.14, true)
+			_saber(u.channel, Color(1.0, 0.92, 0.4, 0.34), Color(1.0, 0.86, 0.15, 0.95), Color(1.0, 1.0, 0.85, 0.95))
 	for fx in sim.mega_fx:
 		var k := 1.0 - float(fx.t) / float(fx.dur)
-		draw_circle(fx.pos, float(fx.r) * (0.15 + 0.9 * k), Color(1.0, 0.4, 0.15, 0.34 * (1.0 - k)))
-		draw_arc(fx.pos, float(fx.r) * (0.2 + 0.85 * k), 0.0, TAU, 36, Color(1.0, 0.9, 0.55, 0.8 * (1.0 - k)), 0.08, true)
+		_mega_zone(fx.pos, float(fx.r) * (0.2 + 0.85 * k), 1.0, 1.0 - k)
 	for fx in sim.saber_fx:
-		var poly2 := _saber_poly(fx)
 		var a2 := clampf(float(fx.t) / float(fx.dur), 0.0, 1.0)
-		draw_colored_polygon(poly2, Color(1.0, 0.95, 0.7, 0.4 * a2))
-		var core_a := (poly2[0] + poly2[3]) * 0.5
-		var core_b := (poly2[1] + poly2[2]) * 0.5
-		draw_line(core_a, core_b, Color(1.0, 1.0, 0.9, 0.85 * a2), 0.07, true)
+		_saber(fx, Color(1.0, 0.95, 0.7, 0.45 * a2), Color(1.0, 0.95, 0.55, 0.9 * a2), Color(1.0, 1.0, 0.9, 0.85 * a2))
 	for k in sim.keeps:
 		if float(k["cap"]) <= 0.0:
 			continue
@@ -127,15 +121,69 @@ func _draw() -> void:
 		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 
-func _saber_poly(ch) -> PackedVector2Array:
+func _fire(f) -> void:
+	var life := clampf(float(f.t) / 2.4, 0.0, 1.0)
+	if life <= 0.02:
+		return
+	var at: Vector2 = f.pos
+	var radius := float(f.r)
+	_blob(at, radius, Color(0.75, 0.16, 0.03, 0.55 * life))
+	var salt := int(absf(at.x * 17.0 + at.y * 9.0))
+	var side := 0.12 if ((int(life * 16.0) + salt) & 1) == 0 else -0.12
+	_blob(at + Vector2(side, -radius * 0.42), radius * 0.5, Color(1.0, 0.78, 0.22, 0.92 * life))
+
+
+func _fireball(s) -> void:
+	var at: Vector2 = s.pos
+	var vel := Vector2(float(s.vx), float(s.vy))
+	var speed := vel.length()
+	var dir := Vector2.RIGHT
+	if speed > 0.001:
+		dir = vel / speed
+	_blob(at - dir * 0.42, 0.16, Color(1.0, 0.3, 0.04, 0.4))
+	_blob(at, 0.28, Color(1.0, 0.46, 0.08, 0.94))
+	_blob(at + dir * 0.1, 0.12, Color(1.0, 0.97, 0.76, 0.96))
+
+
+func _gem(at: Vector2) -> void:
+	_quad[0] = at + Vector2(0.0, -0.24)
+	_quad[1] = at + Vector2(0.16, 0.0)
+	_quad[2] = at + Vector2(0.0, 0.24)
+	_quad[3] = at + Vector2(-0.16, 0.0)
+	draw_colored_polygon(_quad, Color(0.72, 0.96, 1.0, 0.95))
+	_tri[0] = at + Vector2(-0.06, -0.1)
+	_tri[1] = at + Vector2(0.07, -0.02)
+	_tri[2] = at + Vector2(0.0, 0.08)
+	draw_colored_polygon(_tri, Color(1.0, 1.0, 1.0, 0.88))
+
+
+func _mega_zone(at: Vector2, radius: float, pulse: float, fade: float) -> void:
+	if fade <= 0.02 or radius <= 0.01:
+		return
+	var span := radius * pulse
+	_blob(at, span, Color(1.0, 0.24, 0.12, 0.18 * fade))
+	_blob(at, span * 0.38, Color(1.0, 0.62, 0.18, 0.22 * fade))
+	_ring(at, span, Color(1.0, 0.9, 0.45, 0.9 * fade), 0.16)
+	_ring(at, span * 0.72, Color(1.0, 0.4, 0.14, 0.75 * fade), 0.08)
+
+
+func _saber(ch, fill: Color, edge: Color, core: Color) -> void:
 	var ang := float(ch.ang)
 	var fwd := Vector2(cos(ang), sin(ang))
 	var side := Vector2(-fwd.y, fwd.x)
 	var half := float(ch.w) * 0.5
 	var origin: Vector2 = ch.pos
 	var length := float(ch.len)
-	var a := origin + side * half
-	var b := origin - side * half
-	var c := b + fwd * length
-	var d := a + fwd * length
-	return PackedVector2Array([a, d, c, b])
+	_quad[0] = origin + side * half
+	_quad[1] = _quad[0] + fwd * length
+	_quad[2] = origin - side * half + fwd * length
+	_quad[3] = origin - side * half
+	draw_colored_polygon(_quad, fill)
+	_pent[0] = _quad[0]
+	_pent[1] = _quad[1]
+	_pent[2] = _quad[2]
+	_pent[3] = _quad[3]
+	_pent[4] = _quad[0]
+	draw_polyline(_pent, edge, 0.14, true)
+	draw_line((_quad[0] + _quad[3]) * 0.5, (_quad[1] + _quad[2]) * 0.5, core, 0.12, true)
+	draw_line(_quad[1], _quad[2], Color(1.0, 1.0, 0.9, edge.a), 0.18, true)

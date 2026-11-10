@@ -52,17 +52,48 @@ var _steer := {}
 var _block_shape := CircleShape2D.new()
 var _block_query := PhysicsShapeQueryParameters2D.new()
 var _ray := PhysicsRayQueryParameters2D.new()
+var _net_buf := StreamPeerBuffer.new()
+var _water_dirty := true
+var _water_bounds: Array = []
 
 @onready var camera: Camera2D = $Camera2D
 @onready var unit_root: Node2D = $Units
 @onready var hud: Node = $HUD
 
 
+func _enter_tree() -> void:
+	if not (get_parent() is SubViewport):
+		return
+	# This match is one server room. It stays able to register physics bodies,
+	# and it does not draw, take the main camera, or build a HUD.
+	visible = false
+	var cam := get_node_or_null("Camera2D") as Camera2D
+	if cam:
+		cam.enabled = false
+	var hud_node := get_node_or_null("HUD")
+	if hud_node:
+		var touch := hud_node.get_node_or_null("TouchControls")
+		if touch:
+			touch.set_script(null)
+		hud_node.set_script(null)
+		hud_node.visible = false
+		hud_node.set_process(false)
+	var fx := get_node_or_null("Fx")
+	if fx:
+		fx.set_script(null)
+		fx.visible = false
+		fx.set_process(false)
+
+
 func _ready() -> void:
 	camera.zoom = Vector2(32, 32)
-	if not (get_parent() is SubViewport):
+	if get_parent() is SubViewport:
+		camera.enabled = false
+		if camera.is_current():
+			camera.clear_current()
+	else:
 		camera.make_current()
-	unit_root.y_sort_enabled = true
+		unit_root.y_sort_enabled = true
 	_block_query.collide_with_bodies = true
 	_block_query.collide_with_areas = false
 	_block_query.shape = _block_shape
@@ -94,6 +125,7 @@ func start_match(data: Dictionary, record_results: bool = true, show_help: bool 
 	units.clear()
 	diamonds.clear()
 	WorldBuilder.populate(self)
+	_water_dirty = true
 	_spawn_diamonds()
 	_spawn_units(data)
 	camera.global_position = player.global_position
@@ -235,10 +267,12 @@ func tick(dt: float) -> void:
 		if clock <= 0.0:
 			end_match("draw")
 	shake = maxf(0.0, shake - dt * 1.8)
+	if net_role == "server":
+		return
 	_tick_fx(dt)
 	_sync_world()
 	_sync_diamonds()
-	if player and is_instance_valid(player):
+	if player and is_instance_valid(player) and camera:
 		camera.global_position = camera.global_position.lerp(player.global_position, minf(1.0, dt * 6.0))
 		if shake > 0.0:
 			camera.offset = Vector2(randf_range(-1.0, 1.0), randf_range(-1.0, 1.0)) * shake * 0.25
@@ -283,18 +317,20 @@ func _bot(id: String, bot_name: String, team: int, gender: String, role: String,
 
 
 func _spawn_diamonds() -> void:
+	var show_gem := net_role != "server"
 	for home in diamond_homes:
 		var d := State.new()
 		d.team = int(home["team"])
 		d.home = home["home"]
 		d.pos = home["home"]
 		d.at_home = true
-		var node := Node2D.new()
-		node.set_script(DiamondView)
-		node.set("team", d.team)
-		unit_root.add_child(node)
-		node.global_position = d.home
-		d.node = node
+		if show_gem:
+			var node := Node2D.new()
+			node.set_script(DiamondView)
+			node.set("team", d.team)
+			unit_root.add_child(node)
+			node.global_position = d.home
+			d.node = node
 		diamonds.append(d)
 
 
@@ -304,6 +340,9 @@ func mask_for(team: int) -> int:
 
 
 func in_water(pos: Vector2) -> bool:
+	if _water_dirty:
+		_rebuild_water_bounds()
+		_water_dirty = false
 	for rect in bridges:
 		if (rect as Rect2).has_point(pos):
 			return false
@@ -313,10 +352,27 @@ func in_water(pos: Vector2) -> bool:
 				return false
 		elif pos.distance_to(isle["pos"]) < float(isle["r"]):
 			return false
-	for poly in water_polys:
-		if Geometry2D.is_point_in_polygon(pos, poly):
+	for i in water_polys.size():
+		if i < _water_bounds.size() and not (_water_bounds[i] as Rect2).has_point(pos):
+			continue
+		if Geometry2D.is_point_in_polygon(pos, water_polys[i]):
 			return true
 	return false
+
+
+func _rebuild_water_bounds() -> void:
+	_water_bounds.clear()
+	for poly in water_polys:
+		var rect := Rect2()
+		var started := false
+		for point in poly:
+			var at: Vector2 = point
+			if not started:
+				rect = Rect2(at, Vector2.ZERO)
+				started = true
+			else:
+				rect = rect.expand(at)
+		_water_bounds.append(rect.grow(0.02))
 
 
 func keep_blocks(pos: Vector2, team: int) -> bool:
@@ -416,11 +472,12 @@ func steer_point(u, goal: Vector2) -> Vector2:
 
 func nearest_enemy(u, rad: float):
 	var best = null
-	var bd := rad
+	var bd := rad * rad
+	var origin: Vector2 = u.global_position
 	for o in units:
 		if o == u or o.dead or o.team == u.team:
 			continue
-		var dist: float = u.global_position.distance_to(o.global_position)
+		var dist: float = origin.distance_squared_to(o.global_position)
 		if dist < bd:
 			bd = dist
 			best = o
@@ -430,11 +487,13 @@ func nearest_enemy(u, rad: float):
 func enemy_door(u):
 	var best = null
 	var bd := 1.5
+	var origin: Vector2 = u.global_position
 	for w in walls:
 		if w["kind"] != "door" or float(w["hp"]) <= 0.0 or int(w["team"]) == u.team:
 			continue
-		if _rect_hit(u.global_position, w["rect"])["d"] < bd:
-			bd = _rect_hit(u.global_position, w["rect"])["d"]
+		var dist := float(_rect_hit(origin, w["rect"])["d"])
+		if dist < bd:
+			bd = dist
 			best = w
 	return best
 
@@ -635,7 +694,7 @@ func finish_channel(u) -> void:
 		var door = ch.src
 		door["hp"] = minf(float(door["max"]), float(door["hp"]) + 40.0)
 		door["shape"].disabled = float(door["hp"]) <= 0.0
-		door["visual"].visible = float(door["hp"]) > 0.0
+		_show_record(door, float(door["hp"]) > 0.0)
 		float_at(u.global_position + Vector2(0, -0.9), "REPAIR", Color(1, 0.88, 0.54))
 	elif ch.kind == "catapult" and ch.src != null:
 		var flight := State.new()
@@ -698,14 +757,15 @@ func detonate_mega(u, ch) -> void:
 			continue
 		try_hit(o, Balance.MEGA_DAMAGE, u, Color(1, 0.35, 0.35))
 	burst(ch.pos, Color(1, 0.69, 0.63), 18, 4.0)
-	var fx := State.new()
-	fx.pos = ch.pos
-	fx.t = 1.7
-	fx.dur = 1.7
-	fx.r = ch.r
-	mega_fx.append(fx)
+	if net_role != "server":
+		var fx := State.new()
+		fx.pos = ch.pos
+		fx.t = 1.7
+		fx.dur = 1.7
+		fx.r = ch.r
+		mega_fx.append(fx)
 	shake = 1.35
-	Sfx.play("mega")
+	_sfx("mega")
 
 
 func detonate_saber(u, ch) -> void:
@@ -715,16 +775,17 @@ func detonate_saber(u, ch) -> void:
 		if not in_saber_lane(ch, o.global_position):
 			continue
 		try_hit(o, Balance.SABER_DAMAGE, u, Color(1, 0.88, 0.54))
-	var fx := State.new()
-	fx.pos = ch.pos
-	fx.ang = ch.ang
-	fx.len = ch.len
-	fx.w = ch.w
-	fx.t = 0.9
-	fx.dur = 0.9
-	saber_fx.append(fx)
+	if net_role != "server":
+		var fx := State.new()
+		fx.pos = ch.pos
+		fx.ang = ch.ang
+		fx.len = ch.len
+		fx.w = ch.w
+		fx.t = 0.9
+		fx.dur = 0.9
+		saber_fx.append(fx)
 	shake = 1.15
-	Sfx.play("saber")
+	_sfx("saber")
 
 
 func in_saber_lane(ch, pos: Vector2) -> bool:
@@ -768,7 +829,7 @@ func _cast_strike(u, shape: Dictionary, damage: float, burn_dps: float, burn_t: 
 	u.swing_vis = 0.26
 	u.apply_swing_fields(shape)
 	strike_area(u, u.global_position, u.facing, shape, damage * mul, burn_dps * mul, burn_t)
-	Sfx.play("swing_fire")
+	_sfx("swing_fire")
 
 
 func spawn_fireball(u) -> void:
@@ -803,16 +864,19 @@ func spawn_clones(u) -> void:
 		if old.node and is_instance_valid(old.node):
 			old.node.queue_free()
 	u.clones.clear()
+	var show_body := net_role != "server"
 	for side in [-PI / 4.0, PI / 4.0]:
-		var host := Node2D.new()
-		var rig := Node2D.new()
-		rig.set_script(preload("res://scripts/fighter_visual.gd"))
-		rig.name = "Fighter"
-		host.add_child(rig)
-		rig.set("gender", u.gender)
-		rig.set("team", u.team)
-		rig.set("ghost", true)
-		unit_root.add_child(host)
+		var host: Node2D = null
+		if show_body:
+			host = Node2D.new()
+			var rig := Node2D.new()
+			rig.set_script(preload("res://scripts/fighter_visual.gd"))
+			rig.name = "Fighter"
+			host.add_child(rig)
+			rig.set("gender", u.gender)
+			rig.set("team", u.team)
+			rig.set("ghost", true)
+			unit_root.add_child(host)
 		var c := State.new()
 		c.id = _clone_seq
 		_clone_seq += 1
@@ -826,7 +890,7 @@ func spawn_clones(u) -> void:
 		c.r = 0.42
 		u.clones.append(c)
 	float_at(u.global_position + Vector2(0, -0.9), "ICE", Color(0.73, 0.95, 1))
-	Sfx.play("ice")
+	_sfx("ice")
 
 
 func start_dash(u) -> void:
@@ -841,7 +905,7 @@ func start_dash(u) -> void:
 	dash.from_pos = u.global_position
 	u.dash = dash
 	u.invuln = maxf(u.invuln, dur)
-	Sfx.play("dash")
+	_sfx("dash")
 
 
 func strike_dash(u) -> void:
@@ -876,7 +940,7 @@ func resolve_swing(u) -> void:
 	u.apply_swing_fields(shape)
 	if str(shape.get("kind", "")) == "none":
 		return
-	Sfx.play("swing_fire" if str(u.weapon) == "sword" else "swing")
+	_sfx("swing_fire" if str(u.weapon) == "sword" else "swing")
 	strike_area(u, u.global_position, u.facing, shape, weapon_damage(u), 0.0, 0.0)
 	for c2 in u.clones:
 		if c2.alive:
@@ -1003,6 +1067,8 @@ func kill_unit(u, src) -> void:
 	u.dead = true
 	u.hp = 0.0
 	u.respawn_t = Balance.RESPAWN_TIME
+	if u.body_col:
+		u.body_col.disabled = true
 	if u.carrying != null:
 		detach(u.carrying, u.global_position)
 	u.cast = null
@@ -1020,12 +1086,14 @@ func kill_unit(u, src) -> void:
 		takedowns[src.team] = int(takedowns[src.team]) + 1
 		kill_call = {"text": "%s kill %s" % [src.unit_name, u.unit_name], "t": 2.2}
 	burst(u.global_position, Color(1, 0.54, 0.66) if u.team == 0 else Color(0.56, 0.77, 1), 12, 2.6)
-	Sfx.play("kill")
+	_sfx("kill")
 
 
 func respawn_unit(u) -> void:
 	var spot := Vector2(12, 26) if u.team == 0 else Vector2(77, 25)
 	u.dead = false
+	if u.body_col:
+		u.body_col.disabled = false
 	u.global_position = spot + Vector2(randf_range(-0.6, 0.6), randf_range(-0.6, 0.6))
 	u.force_update_transform()
 	u.hp = u.max_hp
@@ -1082,7 +1150,7 @@ func throw_diamond(u) -> void:
 	shot.team = u.team
 	shots.append(shot)
 	float_at(u.global_position + Vector2(0, -0.9), "THROW", Color(0.75, 0.96, 1))
-	Sfx.play("throw")
+	_sfx("throw")
 
 
 func resolve_pickups() -> void:
@@ -1368,7 +1436,7 @@ func blocking_keep(s):
 func explode_fireball(s, hit: Dictionary) -> void:
 	var at: Vector2 = s.pos
 	burst(at, Color(1, 0.54, 0.24), 12, 3.2)
-	Sfx.play("explode")
+	_sfx("explode")
 	var kind: String = hit["kind"]
 	if kind == "unit":
 		try_hit(hit["obj"], s.direct, s.src, Color(1, 0.7, 0.35))
@@ -1407,10 +1475,12 @@ func drop_fire(at: Vector2) -> void:
 
 
 func standing_in_fire(u) -> bool:
+	var origin: Vector2 = u.global_position
 	for f in fires:
 		if f.t <= 0.0:
 			continue
-		if u.global_position.distance_to(f.pos) <= f.r:
+		var reach: float = f.r
+		if origin.distance_squared_to(f.pos) <= reach * reach:
 			return true
 	return false
 
@@ -1442,7 +1512,7 @@ func nearest_walkable(pos: Vector2, radius: float, team: int) -> Vector2:
 func damage_door(w, amount: float) -> void:
 	w["hp"] = maxf(0.0, float(w["hp"]) - amount)
 	w["shape"].disabled = float(w["hp"]) <= 0.0
-	w["visual"].visible = float(w["hp"]) > 0.0
+	_show_record(w, float(w["hp"]) > 0.0)
 	if float(w["hp"]) <= 0.0:
 		burst(_rect_hit(w["rect"].get_center(), w["rect"])["at"], Color(0.79, 0.52, 0.23), 8, 2.0)
 
@@ -1451,14 +1521,16 @@ func damage_rock(rk, amount: float) -> void:
 	rk["hp"] = maxf(0.0, float(rk["hp"]) - amount)
 	var gone := float(rk["hp"]) <= 0.0
 	rk["shape"].disabled = gone
-	rk["visual"].visible = not gone
+	_show_record(rk, not gone)
 
 
 func damage_sewer(s, amount: float) -> void:
 	s["hp"] = maxf(0.0, float(s["hp"]) - amount)
 	float_at(s["pos"], str(int(round(amount))), Color(0.91, 0.83, 0.69))
 	if float(s["hp"]) <= 0.0:
-		s["visual"].color = Color(0.14, 0.19, 0.27)
+		var cover = s.get("visual")
+		if cover != null:
+			cover.color = Color(0.14, 0.19, 0.27)
 		float_at(s["pos"] + Vector2(0, -0.4), "COVER BROKEN", Color.WHITE)
 
 
@@ -1477,12 +1549,14 @@ func end_match(kind: String, team: int = -1) -> void:
 	if net_role == "server":
 		Net.publish_result(result, self)
 	if kind == "win":
-		Sfx.play("win")
-	if hud and hud.has_method("show_result"):
+		_sfx("win")
+	if net_role != "server" and hud and hud.has_method("show_result"):
 		hud.show_result(result)
 
 
 func float_at(pos: Vector2, text: String, color: Color) -> void:
+	if net_role == "server":
+		return
 	var f := State.new()
 	f.pos = pos
 	f.name = text
@@ -1495,6 +1569,8 @@ func float_at(pos: Vector2, text: String, color: Color) -> void:
 
 
 func burst(pos: Vector2, color: Color, n: int, speed: float) -> void:
+	if net_role == "server":
+		return
 	for _i in n:
 		var a := randf() * TAU
 		var sp := speed * (0.35 + randf())
@@ -1510,28 +1586,36 @@ func burst(pos: Vector2, color: Color, n: int, speed: float) -> void:
 
 
 func _tick_fires(dt: float) -> void:
-	var kept: Array = []
-	for f in fires:
+	var write := 0
+	for i in fires.size():
+		var f = fires[i]
 		f.t -= dt
 		if f.t > 0.0:
-			kept.append(f)
-	fires = kept
+			if write != i:
+				fires[write] = f
+			write += 1
+	if write < fires.size():
+		fires.resize(write)
 
 
 func _tick_cakes(dt: float) -> void:
 	for cake in cakes:
+		var node = cake.get("node")
 		if float(cake["t"]) > 0.0:
 			cake["t"] = float(cake["t"]) - dt
-			cake["node"].visible = false
+			if node:
+				node.visible = false
 			continue
-		cake["node"].visible = true
+		if node:
+			node.visible = true
 		for u in units:
 			if u.dead:
 				continue
 			if u.global_position.distance_to(cake["pos"]) < 1.2:
 				u.hp = minf(u.max_hp, u.hp + 30.0)
 				cake["t"] = 18.0
-				cake["node"].visible = false
+				if node:
+					node.visible = false
 				float_at(u.global_position + Vector2(0, -0.9), "+30", Color(1, 0.88, 0.54))
 				break
 
@@ -1596,10 +1680,30 @@ func _sync_world() -> void:
 
 
 func _paint(record: Dictionary, color: Color) -> void:
-	if record.get("_tint", null) == color:
+	var visual = record.get("visual")
+	if visual == null or record.get("_tint", null) == color:
 		return
 	record["_tint"] = color
-	(record["visual"] as Polygon2D).color = color
+	(visual as Polygon2D).color = color
+
+
+func _show_record(record: Dictionary, shown: bool) -> void:
+	var visual = record.get("visual")
+	if visual != null:
+		visual.visible = shown
+
+
+func _sfx(id: String) -> void:
+	if net_role == "server":
+		return
+	Sfx.play(id)
+
+
+func _park_server_space() -> void:
+	var world := get_world_2d()
+	if world == null:
+		return
+	PhysicsServer2D.space_set_active(world.space, false)
 
 
 func _separate(u) -> void:
@@ -1609,9 +1713,10 @@ func _separate(u) -> void:
 		if o == u or o.dead:
 			continue
 		var delta: Vector2 = u.global_position - o.global_position
-		var dist := delta.length()
+		var dist2 := delta.length_squared()
 		var need: float = u.radius + o.radius
-		if dist > 0.001 and dist < need:
+		if dist2 > 0.000001 and dist2 < need * need:
+			var dist := sqrt(dist2)
 			var push: float = (need - dist) * (1.0 if o.is_player else 0.5)
 			var n := delta / dist
 			u.try_step(n.x * push, n.y * push)
@@ -1668,19 +1773,22 @@ func start_online_match(crimson: Dictionary, azure: Dictionary, crimson_peer: in
 		child.free()
 	units.clear()
 	diamonds.clear()
-	WorldBuilder.populate(self)
+	WorldBuilder.populate(self, net_role != "server")
+	_water_dirty = true
 	_spawn_diamonds()
 	_spawn_online_units(crimson, azure, crimson_peer, azure_peer, local_peer)
 	if player == null:
 		player = unit_by_id("crimson")
-	if player and is_instance_valid(player):
+	if net_role != "server" and player and is_instance_valid(player) and camera:
 		camera.global_position = player.global_position
-	if local_peer != 0:
+	if local_peer != 0 and camera:
 		camera.make_current()
+	if net_role == "server":
+		_park_server_space()
 	phase = "play"
-	if hud and hud.has_method("bind_match"):
+	if net_role != "server" and hud and hud.has_method("bind_match"):
 		hud.bind_match(self)
-	if hud and hud.has_method("hide_help"):
+	if net_role != "server" and hud and hud.has_method("hide_help"):
 		hud.hide_help()
 
 
@@ -1788,8 +1896,9 @@ func apply_net_buttons(unit, buttons: int) -> void:
 
 
 func pack_net_bytes(ack: Dictionary) -> PackedByteArray:
-	var buf := StreamPeerBuffer.new()
+	var buf := _net_buf
 	buf.big_endian = false
+	buf.seek(0)
 	buf.put_u64(Time.get_ticks_msec())
 	buf.put_float(clock)
 	buf.put_float(time)
@@ -1853,12 +1962,11 @@ func pack_net_bytes(ack: Dictionary) -> PackedByteArray:
 	_pack_fires(buf)
 	_pack_cooldowns(buf)
 	_pack_doors(buf)
-	var kill_text := ""
+	var kill_bytes := PackedByteArray()
 	if kill_call != null:
-		kill_text = str(kill_call.get("text", ""))
-	var kill_bytes := kill_text.to_utf8_buffer()
-	if kill_bytes.size() > 80:
-		kill_bytes = kill_bytes.slice(0, 80)
+		kill_bytes = str(kill_call.get("text", "")).to_utf8_buffer()
+		if kill_bytes.size() > 80:
+			kill_bytes = kill_bytes.slice(0, 80)
 	buf.put_u8(kill_bytes.size())
 	if kill_bytes.size() > 0:
 		buf.put_data(kill_bytes)
@@ -1876,7 +1984,7 @@ func pack_net_bytes(ack: Dictionary) -> PackedByteArray:
 		result_team = 255 if team < 0 else team
 	buf.put_u8(result_code)
 	buf.put_u8(result_team)
-	return buf.data_array
+	return buf.data_array.slice(0, buf.get_position())
 
 
 func apply_net_bytes(raw: PackedByteArray) -> void:
@@ -1889,11 +1997,12 @@ func apply_net_bytes(raw: PackedByteArray) -> void:
 
 
 func _decode_net_bytes(raw: PackedByteArray) -> Dictionary:
-	var buf := StreamPeerBuffer.new()
-	buf.big_endian = false
-	buf.data_array = raw
 	if raw.size() < 24:
 		return {}
+	var buf := _net_buf
+	buf.big_endian = false
+	buf.data_array = raw
+	buf.seek(0)
 	var server_ms := int(buf.get_u64())
 	var clock_v := buf.get_float()
 	var time_v := buf.get_float()
@@ -2173,31 +2282,43 @@ func _read_doors(buf: StreamPeerBuffer) -> Array:
 
 
 func _apply_net_shots(rows: Array) -> void:
-	var next: Array = []
+	var n := 0
 	for row in rows:
 		if typeof(row) != TYPE_ARRAY or row.size() < 6:
 			continue
-		var s := State.new()
+		var s = shots[n] if n < shots.size() else State.new()
 		s.kind = "fireball" if int(row[0]) == 1 else "gem"
 		s.pos = Vector2(float(row[1]), float(row[2]))
 		s.vx = float(row[3])
 		s.vy = float(row[4])
 		s.team = int(row[5])
-		next.append(s)
-	shots = next
+		s.diamond = null
+		s.src = null
+		if n < shots.size():
+			shots[n] = s
+		else:
+			shots.append(s)
+		n += 1
+	if shots.size() > n:
+		shots.resize(n)
 
 
 func _apply_net_fires(rows: Array) -> void:
-	var next: Array = []
+	var n := 0
 	for row in rows:
 		if typeof(row) != TYPE_ARRAY or row.size() < 4:
 			continue
-		var f := State.new()
+		var f = fires[n] if n < fires.size() else State.new()
 		f.pos = Vector2(float(row[0]), float(row[1]))
 		f.r = float(row[2])
 		f.t = float(row[3])
-		next.append(f)
-	fires = next
+		if n < fires.size():
+			fires[n] = f
+		else:
+			fires.append(f)
+		n += 1
+	if fires.size() > n:
+		fires.resize(n)
 
 
 func _apply_net_cds(rows: Array) -> void:
@@ -2226,7 +2347,7 @@ func _apply_net_doors(rows: Array) -> void:
 		i += 1
 		w["hp"] = hp
 		w["shape"].disabled = hp <= 0.0
-		w["visual"].visible = hp > 0.0
+		_show_record(w, hp > 0.0)
 
 
 func _apply_net_gems(gems: Array) -> void:

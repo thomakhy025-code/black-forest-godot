@@ -31,6 +31,7 @@ var result_body: Label
 var again_btn: Button
 var minimap: Control
 var _skill_buttons := {}
+var _skill_tokens := {}
 var _map_wait := 0.0
 
 
@@ -138,7 +139,9 @@ func _process(_delta: float) -> void:
 	var secs := int(maxf(0.0, sim.clock))
 	clock_label.text = "%d:%02d" % [secs / 60, secs % 60]
 	weapon_label.text = _weapon_line(player)
-	buff_label.text = _buffs(player)
+	var next_buff := _buffs(player)
+	if buff_label.text != next_buff:
+		buff_label.text = next_buff
 	if player.carrying != null:
 		carry_label.text = "Carrying — half speed, no attacks. Throw or F. Defense halves damage for 5 MP/s."
 	else:
@@ -160,12 +163,29 @@ func _process(_delta: float) -> void:
 		kill_label.text = str(sim.kill_call["text"])
 		var left := float(sim.kill_call["t"])
 		kill_label.modulate.a = 1.0 if left > 0.35 else clampf(left / 0.35, 0.0, 1.0)
+	var active := _active_skill(player)
+	var swinging: bool = player.attack_wind > 0.0 or player.swing_vis > 0.0 or int(player.net_pose) == 2
+	var attack_mod := Color(1.0, 0.78, 0.35) if swinging else Color.WHITE
+	if attack_btn.modulate != attack_mod:
+		attack_btn.modulate = attack_mod
 	for id in _skill_buttons.keys():
 		var btn: Button = _skill_buttons[id]
 		var cd := float(player.cds.get(id, 0.0))
+		var tenth: int = -1 if cd <= 0.05 else int(round(cd * 10.0))
+		var lit: bool = active == str(id)
+		var token: int = tenth * 2 + (1 if lit else 0)
+		if int(_skill_tokens.get(id, -99999)) == token:
+			continue
+		_skill_tokens[id] = token
 		var def: Dictionary = Balance.SKILLS[id]
-		var extra := "" if cd <= 0.0 else "  %.1f" % cd
+		var extra := "" if tenth < 0 else "  %.1f" % cd
 		btn.text = "%s  %s%s" % [def["key"], Balance.SHORT[id], extra]
+		if lit:
+			btn.modulate = Color(1.0, 0.78, 0.35)
+		elif tenth >= 0:
+			btn.modulate = Color(0.68, 0.62, 0.56)
+		else:
+			btn.modulate = Color.WHITE
 	_map_wait += _delta
 	if minimap and _map_wait >= 0.12:
 		_map_wait = 0.0
@@ -205,8 +225,25 @@ func _gems() -> String:
 	return "   ".join(parts)
 
 
+func _active_skill(player) -> String:
+	if player.cast != null:
+		return str(player.cast.name)
+	if player.channel != null and str(player.channel.kind) == "mega":
+		return "mega"
+	return ""
+
+
 func _buffs(player) -> String:
 	var bits: Array = []
+	var pose := int(player.net_pose)
+	if player.dash != null or player.hop != null or player.flight != null or pose == 6:
+		bits.append("Dash")
+	elif player.channel != null or pose == 4:
+		bits.append("Channel")
+	elif player.cast != null or pose == 3:
+		bits.append("Cast")
+	elif player.swing_vis > 0.0 or player.attack_wind > 0.0 or pose == 2:
+		bits.append("Swing")
 	if player.fire_sword_t > 0.0:
 		bits.append("Fire sword %d" % int(player.fire_sword_hits))
 	if player.shock > 0.0:
@@ -246,6 +283,7 @@ func _rebuild_skills() -> void:
 	for child in skill_row.get_children():
 		child.queue_free()
 	_skill_buttons.clear()
+	_skill_tokens.clear()
 	if sim == null or sim.player == null:
 		return
 	var kit: Array = Balance.WEAPON_KITS.get(str(sim.player.weapon), [])

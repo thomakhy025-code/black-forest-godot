@@ -872,14 +872,21 @@ func _host_server_match() -> Node:
 		rooms_root.name = "Rooms"
 		add_child(rooms_root)
 	var view := SubViewport.new()
-	view.world_2d = World2D.new()
+	var world := World2D.new()
+	view.world_2d = world
 	view.render_target_update_mode = SubViewport.UPDATE_DISABLED
+	view.render_target_clear_mode = SubViewport.CLEAR_MODE_NEVER
 	view.size = Vector2i(2, 2)
 	view.handle_input_locally = false
 	view.gui_disable_input = true
+	view.physics_object_picking = false
+	view.disable_3d = true
+	# Queries still see the bodies. The engine must not also step this room.
+	PhysicsServer2D.space_set_active(world.space, false)
 	rooms_root.add_child(view)
 	var node := MatchScene.instantiate()
 	view.add_child(node)
+	PhysicsServer2D.space_set_active(world.space, false)
 	return node
 
 

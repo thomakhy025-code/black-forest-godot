@@ -73,6 +73,7 @@ var _font: Font
 
 var _draw_key := -1
 var _fade := 1.0
+var _quiet := false
 var _motion := PhysicsTestMotionParameters2D.new()
 var _motion_hit := PhysicsTestMotionResult2D.new()
 
@@ -95,8 +96,35 @@ func _ready() -> void:
 	sprite.visible = false
 	blade.visible = false
 	_font = ThemeDB.fallback_font
-	_build_anims()
+	_quiet = _under_server_room()
+	if _quiet:
+		set_process(false)
+		visible = false
+		if fighter:
+			fighter.set_process(false)
+			fighter.visible = false
+		if visual:
+			visual.visible = false
+		if anim:
+			anim.active = false
+	else:
+		_build_anims()
 	set_physics_process(false)
+
+
+func _under_server_room() -> bool:
+	var node: Node = self
+	while node != null:
+		if node is SubViewport:
+			return true
+		node = node.get_parent()
+	return false
+
+
+func _sfx(id: String) -> void:
+	if _quiet:
+		return
+	Sfx.play(id)
 
 
 func setup(def: Dictionary, sim_node: Node) -> void:
@@ -137,6 +165,8 @@ func _process(_delta: float) -> void:
 func tick(dt: float) -> void:
 	if not active:
 		return
+	if body_col != null and body_col.disabled != dead:
+		body_col.disabled = dead
 	collision_mask = sim.mask_for(team)
 	if dead:
 		respawn_t -= dt
@@ -440,7 +470,7 @@ func try_cast(skill_name: String) -> bool:
 		mp -= cost
 		cds[skill_name] = float(def["cd"]) * Balance.cd_mul(stats)
 		sim.begin_mega(self)
-		Sfx.play("mega")
+		_sfx("mega")
 		return true
 	mp -= cost
 	var dur := cast_duration(skill_name)
@@ -453,11 +483,11 @@ func try_cast(skill_name: String) -> bool:
 	cast.root = rooted
 	cast.slow = not rooted
 	if skill_name == "fireball":
-		Sfx.play("fireball")
+		_sfx("fireball")
 	elif skill_name == "ignite" or skill_name == "ember":
-		Sfx.play("firesword")
+		_sfx("firesword")
 	elif skill_name == "spark":
-		Sfx.play("swing_fire")
+		_sfx("swing_fire")
 	return true
 
 
@@ -506,7 +536,7 @@ func try_hop() -> void:
 	hop.dir = dir
 	hop.dist = 1.25
 	hop_cd = 0.85 * (1.0 - 0.005 * float(stats.get("spd", 0)))
-	Sfx.play("hop")
+	_sfx("hop")
 
 
 func equip_weapon(kind: String, announce: bool = false) -> bool:

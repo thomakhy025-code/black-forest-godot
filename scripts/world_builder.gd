@@ -5,8 +5,14 @@ extends RefCounted
 const Balance = preload("res://scripts/balance.gd")
 const LabelScript = preload("res://scripts/world_label.gd")
 
+## Server rooms only need the collision bodies and the sim records. Canvas
+## items are created for the local match and for each client, which is what
+## the player actually sees.
+static var _decorate := true
 
-static func populate(match_node: Node2D) -> void:
+
+static func populate(match_node: Node2D, decorate: bool = true) -> void:
+	_decorate = decorate
 	var parent: Node2D = match_node.get_node("World")
 	for child in parent.get_children():
 		child.free()
@@ -207,17 +213,19 @@ static func _walls(parent: Node2D) -> Array:
 		col.position = rect.position + rect.size * 0.5
 		body.add_child(col)
 		parent.add_child(body)
-		var visual := Polygon2D.new()
-		visual.polygon = rect_poly(rect)
-		visual.color = color
-		parent.add_child(visual)
-		if spec["kind"] == "door":
-			var inset := Rect2(rect.position.x + rect.size.x * 0.22, rect.position.y + 0.04, rect.size.x * 0.56, rect.size.y * 0.22)
-			_poly(parent, rect_poly(inset), Color(1, 1, 1, 0.28))
-		else:
-			var foot := Rect2(rect.position.x, rect.position.y + rect.size.y * 0.62, rect.size.x, rect.size.y * 0.38)
-			_poly(parent, rect_poly(foot), Color(0.62, 0.5, 0.34, 0.9))
-			_merlons(parent, rect)
+		var visual: Polygon2D = null
+		if _decorate:
+			visual = Polygon2D.new()
+			visual.polygon = rect_poly(rect)
+			visual.color = color
+			parent.add_child(visual)
+			if spec["kind"] == "door":
+				var inset := Rect2(rect.position.x + rect.size.x * 0.22, rect.position.y + 0.04, rect.size.x * 0.56, rect.size.y * 0.22)
+				_poly(parent, rect_poly(inset), Color(1, 1, 1, 0.28))
+			else:
+				var foot := Rect2(rect.position.x, rect.position.y + rect.size.y * 0.62, rect.size.x, rect.size.y * 0.38)
+				_poly(parent, rect_poly(foot), Color(0.62, 0.5, 0.34, 0.9))
+				_merlons(parent, rect)
 		walls.append({
 			"kind": spec["kind"],
 			"team": int(spec["team"]),
@@ -275,10 +283,12 @@ static func _rocks(parent: Node2D) -> Array:
 		col.shape = shape
 		body.add_child(col)
 		parent.add_child(body)
-		var visual := Polygon2D.new()
-		visual.polygon = circle_poly(pos, radius, 16)
-		visual.color = Color(0.45, 0.47, 0.52, 1)
-		parent.add_child(visual)
+		var visual: Polygon2D = null
+		if _decorate:
+			visual = Polygon2D.new()
+			visual.polygon = circle_poly(pos, radius, 16)
+			visual.color = Color(0.45, 0.47, 0.52, 1)
+			parent.add_child(visual)
 		rocks.append({"pos": pos, "r": radius, "hp": 48.0, "max": 48.0, "shape": col, "visual": visual})
 	return rocks
 
@@ -294,12 +304,14 @@ static func _keeps(parent: Node2D) -> Array:
 	for k in spec:
 		var pos := Vector2(float(k["x"]), float(k["y"])) * 0.5
 		var radius := 2.0 * 0.5
-		_poly(parent, circle_poly(pos + Vector2(0.06, 0.08), radius * 0.92, 12), Color(0.22, 0.32, 0.16, 0.35))
-		var visual := Polygon2D.new()
-		visual.polygon = _keep_poly(pos, radius)
-		visual.color = Color(0.95, 0.9, 0.78, 1)
-		parent.add_child(visual)
-		_keep_trim(parent, pos, radius, float(k["door"]))
+		var visual: Polygon2D = null
+		if _decorate:
+			_poly(parent, circle_poly(pos + Vector2(0.06, 0.08), radius * 0.92, 12), Color(0.22, 0.32, 0.16, 0.35))
+			visual = Polygon2D.new()
+			visual.polygon = _keep_poly(pos, radius)
+			visual.color = Color(0.95, 0.9, 0.78, 1)
+			parent.add_child(visual)
+			_keep_trim(parent, pos, radius, float(k["door"]))
 		keeps.append({
 			"id": k["id"], "pos": pos, "r": radius, "door": float(k["door"]),
 			"hp": 200.0, "max": 200.0, "owner": -1, "cap": 0.0, "cap_team": -1, "down": 0.0,
@@ -318,14 +330,16 @@ static func _south_towers(parent: Node2D) -> Array:
 		var pos := Vector2(float(t["x"]), float(t["y"])) * 0.5
 		var radius := float(t["r"]) * 0.5
 		var cap_r := float(t["cap_r"]) * 0.5
-		_ring(parent, pos, cap_r, Color(1, 1, 1, 0.35))
-		_poly(parent, circle_poly(pos + Vector2(0.05, 0.08), radius * 0.9, 12), Color(0.22, 0.32, 0.16, 0.28))
-		var visual := Polygon2D.new()
-		visual.polygon = _keep_poly(pos, radius)
-		visual.color = Color(0.95, 0.9, 0.78, 1)
-		parent.add_child(visual)
-		_keep_trim(parent, pos, radius, -PI * 0.5)
-		_label(parent, pos + Vector2(0, -radius - 0.4), str(t["name"]), Color(0.1, 0.08, 0.16))
+		var visual: Polygon2D = null
+		if _decorate:
+			_ring(parent, pos, cap_r, Color(1, 1, 1, 0.35))
+			_poly(parent, circle_poly(pos + Vector2(0.05, 0.08), radius * 0.9, 12), Color(0.22, 0.32, 0.16, 0.28))
+			visual = Polygon2D.new()
+			visual.polygon = _keep_poly(pos, radius)
+			visual.color = Color(0.95, 0.9, 0.78, 1)
+			parent.add_child(visual)
+			_keep_trim(parent, pos, radius, -PI * 0.5)
+			_label(parent, pos + Vector2(0, -radius - 0.4), str(t["name"]), Color(0.1, 0.08, 0.16))
 		towers.append({
 			"name": t["name"], "pos": pos, "r": radius, "cap_r": cap_r,
 			"progress": 0.0, "owner": -1,
@@ -338,14 +352,16 @@ static func _outpost(parent: Node2D) -> Dictionary:
 	var pos := Vector2(88, 15) * 0.5
 	var radius := 2.1 * 0.5
 	var cap_r := 6.4 * 0.5
-	_ring(parent, pos, cap_r, Color(1, 0.85, 0.4, 0.45))
-	_poly(parent, circle_poly(pos + Vector2(0.05, 0.08), radius * 0.9, 12), Color(0.35, 0.24, 0.08, 0.28))
-	var visual := Polygon2D.new()
-	visual.polygon = _keep_poly(pos, radius)
-	visual.color = Color(0.96, 0.84, 0.42, 1)
-	parent.add_child(visual)
-	_keep_trim(parent, pos, radius, PI * 0.5)
-	_label(parent, pos + Vector2(0, -radius - 0.45), "MIDDLE OUTPOST", Color(0.1, 0.08, 0.16))
+	var visual: Polygon2D = null
+	if _decorate:
+		_ring(parent, pos, cap_r, Color(1, 0.85, 0.4, 0.45))
+		_poly(parent, circle_poly(pos + Vector2(0.05, 0.08), radius * 0.9, 12), Color(0.35, 0.24, 0.08, 0.28))
+		visual = Polygon2D.new()
+		visual.polygon = _keep_poly(pos, radius)
+		visual.color = Color(0.96, 0.84, 0.42, 1)
+		parent.add_child(visual)
+		_keep_trim(parent, pos, radius, PI * 0.5)
+		_label(parent, pos + Vector2(0, -radius - 0.45), "MIDDLE OUTPOST", Color(0.1, 0.08, 0.16))
 	return {"name": "Middle Outpost", "pos": pos, "r": radius, "cap_r": cap_r, "progress": 0.0, "owner": -1, "visual": visual}
 
 
@@ -357,10 +373,12 @@ static func _sewers(parent: Node2D) -> Array:
 	var sewers: Array = []
 	for s in spec:
 		var pos := Vector2(float(s["x"]), float(s["y"])) * 0.5
-		var visual := Polygon2D.new()
-		visual.polygon = circle_poly(pos, float(s["r"]) * 0.5, 12)
-		visual.color = Color(0.42, 0.29, 0.16, 1)
-		parent.add_child(visual)
+		var visual: Polygon2D = null
+		if _decorate:
+			visual = Polygon2D.new()
+			visual.polygon = circle_poly(pos, float(s["r"]) * 0.5, 12)
+			visual.color = Color(0.42, 0.29, 0.16, 1)
+			parent.add_child(visual)
 		sewers.append({
 			"team": int(s["team"]), "pos": pos, "r": float(s["r"]) * 0.5,
 			"hp": 32.0, "max": 32.0, "exit": (s["exit"] as Vector2) * 0.5, "visual": visual
@@ -390,11 +408,12 @@ static func _ladders(parent: Node2D) -> Array:
 	for L in spec:
 		var pos := Vector2(float(L["x"]), float(L["y"])) * 0.5
 		var to := (L["to"] as Vector2) * 0.5
-		var line := Line2D.new()
-		line.points = PackedVector2Array([pos, to])
-		line.width = 0.12
-		line.default_color = Color(0.84, 0.69, 0.45, 1)
-		parent.add_child(line)
+		if _decorate:
+			var line := Line2D.new()
+			line.points = PackedVector2Array([pos, to])
+			line.width = 0.12
+			line.default_color = Color(0.84, 0.69, 0.45, 1)
+			parent.add_child(line)
 		out.append({"pos": pos, "to": to})
 	return out
 
@@ -432,6 +451,8 @@ static func _springs(parent: Node2D) -> Array:
 
 
 static func _cake_node(parent: Node2D, pos: Vector2) -> Node2D:
+	if not _decorate:
+		return null
 	var n := Node2D.new()
 	n.position = pos
 	var base := Polygon2D.new()
@@ -608,6 +629,8 @@ static func rect_poly(rect: Rect2) -> PackedVector2Array:
 
 
 static func _poly(parent: Node, pts: PackedVector2Array, color: Color) -> Polygon2D:
+	if not _decorate:
+		return null
 	var visual := Polygon2D.new()
 	visual.polygon = pts
 	visual.color = color
@@ -616,6 +639,8 @@ static func _poly(parent: Node, pts: PackedVector2Array, color: Color) -> Polygo
 
 
 static func _ring(parent: Node, pos: Vector2, radius: float, color: Color) -> void:
+	if not _decorate:
+		return
 	var line := Line2D.new()
 	line.width = 0.08
 	line.default_color = color
@@ -629,6 +654,8 @@ static func _ring(parent: Node, pos: Vector2, radius: float, color: Color) -> vo
 
 
 static func _label(parent: Node, pos: Vector2, text: String, color: Color) -> void:
+	if not _decorate:
+		return
 	var n := Node2D.new()
 	n.position = pos
 	n.set_script(LabelScript)
