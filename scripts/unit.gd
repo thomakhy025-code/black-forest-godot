@@ -69,6 +69,12 @@ var _font: Font
 @onready var blade: Polygon2D = $Visual/WeaponPivot/Blade
 @onready var anim: AnimationPlayer = $AnimationPlayer
 @onready var sensor: Area2D = $Sensor
+@onready var body_col: CollisionShape2D = $CollisionShape2D
+
+var _draw_key := -1
+var _fade := 1.0
+var _motion := PhysicsTestMotionParameters2D.new()
+var _motion_hit := PhysicsTestMotionResult2D.new()
 
 
 func _ready() -> void:
@@ -78,11 +84,11 @@ func _ready() -> void:
 	collision_mask = Balance.LAYER_WALL
 	var shape := CircleShape2D.new()
 	shape.radius = radius
-	$CollisionShape2D.shape = shape
+	body_col.shape = shape
 	var sensor_shape := CircleShape2D.new()
 	sensor_shape.radius = 0.08
 	$Sensor/CollisionShape2D.shape = sensor_shape
-	sensor.monitoring = true
+	sensor.monitoring = false
 	sensor.monitorable = false
 	sensor.collision_layer = 0
 	sensor.collision_mask = Balance.LAYER_WATER | Balance.LAYER_BRIDGE | Balance.LAYER_ISLAND
@@ -126,7 +132,6 @@ func _process(_delta: float) -> void:
 	if not active:
 		return
 	_sync_visual()
-	queue_redraw()
 
 
 func tick(dt: float) -> void:
@@ -137,7 +142,6 @@ func tick(dt: float) -> void:
 		respawn_t -= dt
 		if respawn_t <= 0.0:
 			sim.respawn_unit(self)
-		_sync_visual()
 		return
 	for id in cds.keys():
 		if float(cds[id]) > 0.0:
@@ -255,7 +259,6 @@ func tick(dt: float) -> void:
 	_follow_clones(dt)
 	if carrying != null:
 		carrying.pos = global_position + Vector2(0, -0.2)
-	_sync_visual()
 
 
 func predict_move(dt: float) -> void:
@@ -394,12 +397,10 @@ func try_step(dx: float, dy: float) -> void:
 
 
 func _motion_hits(motion: Vector2) -> bool:
-	var params := PhysicsTestMotionParameters2D.new()
-	params.from = global_transform
-	params.motion = motion
-	params.margin = 0.01
-	var result := PhysicsTestMotionResult2D.new()
-	return PhysicsServer2D.body_test_motion(get_rid(), params, result)
+	_motion.from = global_transform
+	_motion.motion = motion
+	_motion.margin = 0.01
+	return PhysicsServer2D.body_test_motion(get_rid(), _motion, _motion_hit)
 
 
 func root_locked() -> bool:
@@ -607,23 +608,6 @@ func _follow_clones(dt: float) -> void:
 				rig.set("carrying", carrying != null)
 
 
-func _view_for(angle: float) -> Dictionary:
-	var choices: Array = [
-		{"view": "front", "ang": PI / 2.0, "flip": false},
-		{"view": "back", "ang": -PI / 2.0, "flip": false},
-		{"view": "side", "ang": 0.0, "flip": false},
-		{"view": "side", "ang": PI, "flip": true}
-	]
-	var best: Dictionary = choices[0]
-	var best_d := 99.0
-	for choice in choices:
-		var d := absf(Balance.ang_diff(angle, float(choice["ang"])))
-		if d < best_d:
-			best_d = d
-			best = choice
-	return best
-
-
 func _stick_wish() -> Vector2:
 	if sim == null or sim.hud == null or not sim.hud.has_method("stick_wish"):
 		return Vector2.ZERO
@@ -632,33 +616,38 @@ func _stick_wish() -> Vector2:
 
 
 func _sync_visual() -> void:
-	if sprite:
-		sprite.visible = false
-	if blade:
-		blade.visible = false
 	if fighter and fighter.has_method("sync_from"):
 		fighter.sync_from(self)
-		if invuln > 0.0 and fmod(sim.time * 12.0, 1.0) < 0.35:
-			fighter.modulate.a = 0.45
-		else:
-			fighter.modulate.a = 1.0
-	z_index = int(global_position.y * 10.0)
-	$CollisionShape2D.disabled = dead
-	if anim == null:
+		var fade := 0.45 if invuln > 0.0 and fmod(sim.time * 12.0, 1.0) < 0.35 else 1.0
+		if fade != _fade:
+			_fade = fade
+			fighter.modulate.a = fade
+	if body_col.disabled != dead:
+		body_col.disabled = dead
+	if anim != null:
+		var next := "lib/idle"
+		if dead:
+			next = "lib/death"
+		elif root_locked():
+			next = "lib/channel"
+		elif swing_vis > 0.0:
+			next = "lib/swing"
+		elif cast != null:
+			next = "lib/cast"
+		elif move_blend > 0.25:
+			next = "lib/walk"
+		if anim.current_animation != next:
+			anim.play(next)
+	var key := int(hp)
+	key = key * 2 + (1 if swing_vis > 0.0 else 0)
+	key = key * 2 + (1 if guard and carrying != null else 0)
+	key = key * 2 + (1 if dead else 0)
+	key = key * 2 + (1 if cast != null else 0)
+	key = key * 4 + (1 if swing_kind == "rect" else 2 if swing_kind == "arc" else 0)
+	if key == _draw_key:
 		return
-	var next := "lib/idle"
-	if dead:
-		next = "lib/death"
-	elif root_locked():
-		next = "lib/channel"
-	elif swing_vis > 0.0:
-		next = "lib/swing"
-	elif cast != null:
-		next = "lib/cast"
-	elif move_blend > 0.25:
-		next = "lib/walk"
-	if anim.current_animation != next:
-		anim.play(next)
+	_draw_key = key
+	queue_redraw()
 
 
 func _draw() -> void:

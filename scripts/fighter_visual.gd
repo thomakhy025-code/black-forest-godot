@@ -22,6 +22,14 @@ var gait := 0.0
 
 var _flip := 1.0
 var _origin := Vector2.ZERO
+var _pose := -1
+var _oval_pts := PackedVector2Array([
+	Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, Vector2.ZERO,
+	Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, Vector2.ZERO,
+])
+var _quad := PackedVector2Array([Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, Vector2.ZERO])
+
+static var _circle := PackedVector2Array()
 
 
 func sync_from(u) -> void:
@@ -41,11 +49,54 @@ func sync_from(u) -> void:
 	hit_flash = float(u.hit_flash)
 
 
+func _ready() -> void:
+	_ensure_circle()
+
+
+func _ensure_circle() -> void:
+	if not _circle.is_empty():
+		return
+	for i in 8:
+		var a := TAU * float(i) / 8.0
+		_circle.append(Vector2(cos(a), sin(a)))
+
+
 func _process(delta: float) -> void:
+	_ensure_circle()
+	var moving := (move_blend > 0.05 and not dead) or casting or channeling
 	if move_blend > 0.05 and not dead:
 		gait += delta * (2.2 + move_blend * 8.0)
 	elif casting or channeling:
 		gait += delta * 6.0
+	var step := 0
+	if moving:
+		step = int(gait * 1.5) & 7
+	var pose := step
+	pose = pose * 4 + _view_id()
+	pose = pose * 3 + _weapon_id()
+	pose = pose * 8 + mini(int(swing * 12.0), 7)
+	pose = pose * 8 + mini(int(attack_wind * 12.0), 7)
+	if dead:
+		pose += 100000
+	if carrying:
+		pose += 200000
+	if casting:
+		pose += 400000
+	if channeling:
+		pose += 800000
+	if dashing:
+		pose += 1600000
+	if ghost:
+		pose += 3200000
+	if hit_flash > 0.0:
+		pose += 6400000
+	if gender == "male":
+		pose += 12800000
+	if team == 1:
+		pose += 25600000
+	if pose == _pose:
+		return
+	_pose = pose
 	queue_redraw()
 
 
@@ -101,6 +152,25 @@ func _draw() -> void:
 		_oval(Vector2(-0.07, -0.99), 0.014, 0.014, _ink(Color.WHITE))
 		_oval(Vector2(0.08, -0.99), 0.014, 0.014, _ink(Color.WHITE))
 		_sword_arm(outline, skin)
+
+
+func _view_id() -> int:
+	var view := _facing_view()
+	if view == "back":
+		return 1
+	if view == "right":
+		return 2
+	if view == "left":
+		return 3
+	return 0
+
+
+func _weapon_id() -> int:
+	if weapon_kind == "sword":
+		return 1
+	if weapon_kind == "wand":
+		return 2
+	return 0
 
 
 func _facing_view() -> String:
@@ -208,16 +278,20 @@ func _capsule(a: Vector2, b: Vector2, radius: float, color: Color) -> void:
 		return
 	var dir := delta / length
 	var n := Vector2(-dir.y, dir.x) * radius
-	draw_colored_polygon(PackedVector2Array([_p(a + n), _p(a - n), _p(b - n), _p(b + n)]), color)
-	_oval(a, radius, radius, color)
-	_oval(b, radius, radius, color)
+	_quad[0] = _p(a + n)
+	_quad[1] = _p(a - n)
+	_quad[2] = _p(b - n)
+	_quad[3] = _p(b + n)
+	draw_colored_polygon(_quad, color)
 
 
 func _oval(center: Vector2, rx: float, ry: float, color: Color) -> void:
 	var at := _p(center)
-	draw_set_transform(at, 0.0, Vector2(rx, ry))
-	draw_circle(Vector2.ZERO, 1.0, color)
-	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	var sx := rx * _flip
+	for i in 8:
+		var c: Vector2 = _circle[i]
+		_oval_pts[i] = at + Vector2(c.x * sx, c.y * ry)
+	draw_colored_polygon(_oval_pts, color)
 
 
 func _p(point: Vector2) -> Vector2:

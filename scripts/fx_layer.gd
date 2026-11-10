@@ -2,35 +2,67 @@ extends Node2D
 
 var sim: Node = null
 var _font: Font
+var _drawing := false
+var _dot := PackedVector2Array([
+	Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, Vector2.ZERO,
+	Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, Vector2.ZERO,
+])
+
+static var _circle := PackedVector2Array()
 
 
 func _ready() -> void:
 	sim = get_parent()
 	_font = ThemeDB.fallback_font
 	z_index = 20
+	if _circle.is_empty():
+		for i in 8:
+			var a := TAU * float(i) / 8.0
+			_circle.append(Vector2(cos(a), sin(a)))
 
 
 func _process(_delta: float) -> void:
-	queue_redraw()
+	var draw := _needs_draw()
+	if draw or _drawing:
+		queue_redraw()
+	_drawing = draw
+
+
+func _needs_draw() -> bool:
+	if sim == null or sim.get("phase") == "boot":
+		return false
+	if not sim.fires.is_empty() or not sim.shots.is_empty() or not sim.mega_fx.is_empty():
+		return true
+	if not sim.saber_fx.is_empty() or not sim.bursts.is_empty() or not sim.floats.is_empty():
+		return true
+	for u in sim.units:
+		if u.channel != null:
+			return true
+	for k in sim.keeps:
+		if float(k["cap"]) > 0.0:
+			return true
+	for d in sim.diamonds:
+		if float(d.bank) > 0.05 and d.carrier != null:
+			return true
+	return false
+
+
+func _blob(at: Vector2, radius: float, color: Color) -> void:
+	for i in 8:
+		var c: Vector2 = _circle[i]
+		_dot[i] = at + c * radius
+	draw_colored_polygon(_dot, color)
 
 
 func _draw() -> void:
 	if sim == null or sim.get("phase") == "boot":
 		return
 	for f in sim.fires:
-		var a := clampf(float(f.t) / 5.0, 0.0, 1.0)
-		draw_circle(f.pos, float(f.r) * 1.15, Color(0.55, 0.08, 0.02, 0.28 * a))
-		draw_circle(f.pos, float(f.r), Color(1.0, 0.38, 0.05, 0.5 * a))
-		draw_circle(f.pos, float(f.r) * 0.45, Color(1.0, 0.86, 0.35, 0.75 * a))
-		draw_circle(f.pos, float(f.r) * 0.16, Color(1.0, 0.98, 0.85, 0.9 * a))
+		var a := clampf(float(f.t) / 2.4, 0.0, 1.0)
+		_blob(f.pos, float(f.r), Color(1.0, 0.42, 0.08, 0.62 * a))
 	for s in sim.shots:
 		if s.kind == "fireball":
-			var tail := Vector2(s.vx, s.vy)
-			if tail.length_squared() > 0.01:
-				tail = tail.normalized()
-			draw_circle(s.pos - tail * 0.45, 0.34, Color(1.0, 0.28, 0.02, 0.35))
-			draw_circle(s.pos, 0.42, Color(1.0, 0.42, 0.06, 0.55))
-			draw_circle(s.pos, 0.2, Color(1.0, 0.97, 0.75, 0.95))
+			_blob(s.pos, 0.28, Color(1.0, 0.45, 0.08, 0.9))
 		elif s.kind == "gem":
 			var gem: Vector2 = s.pos
 			draw_colored_polygon(PackedVector2Array([
@@ -84,7 +116,7 @@ func _draw() -> void:
 	for p in sim.bursts:
 		var c: Color = p.color
 		c.a = clampf(float(p.t) / 0.35, 0.0, 1.0)
-		draw_circle(p.pos, float(p.r), c)
+		_blob(p.pos, float(p.r), c)
 	if _font == null:
 		return
 	for f2 in sim.floats:

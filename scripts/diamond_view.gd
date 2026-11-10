@@ -2,10 +2,15 @@ extends Node2D
 
 var team := 0
 var bob := 0.0
+var _step := -1
 
 
 func _process(delta: float) -> void:
 	bob += delta
+	var step := int(bob * 6.0)
+	if step == _step:
+		return
+	_step = step
 	queue_redraw()
 
 

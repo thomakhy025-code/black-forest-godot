@@ -218,8 +218,15 @@ static func astar(start: String, goal: String) -> Array:
 	var g := {start: 0.0}
 	var f := {start: NODES[start].distance_to(NODES[goal])}
 	while open.size() > 0:
-		open.sort_custom(func(a, b): return float(f.get(a, 1e9)) < float(f.get(b, 1e9)))
-		var cur: String = open.pop_front()
+		var best_i := 0
+		var best_f := float(f.get(open[0], 1e9))
+		for i in range(1, open.size()):
+			var score := float(f.get(open[i], 1e9))
+			if score < best_f:
+				best_f = score
+				best_i = i
+		var cur: String = open[best_i]
+		open.remove_at(best_i)
 		if cur == goal:
 			var path: Array = [cur]
 			while came.has(path[0]):

@@ -31,6 +31,7 @@ var result_body: Label
 var again_btn: Button
 var minimap: Control
 var _skill_buttons := {}
+var _map_wait := 0.0
 
 
 func _ready() -> void:
@@ -165,7 +166,9 @@ func _process(_delta: float) -> void:
 		var def: Dictionary = Balance.SKILLS[id]
 		var extra := "" if cd <= 0.0 else "  %.1f" % cd
 		btn.text = "%s  %s%s" % [def["key"], Balance.SHORT[id], extra]
-	if minimap:
+	_map_wait += _delta
+	if minimap and _map_wait >= 0.12:
+		_map_wait = 0.0
 		minimap.queue_redraw()
 
 

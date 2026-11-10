@@ -48,6 +48,10 @@ var kill_call = null
 var result = null
 var last_data: Dictionary = {}
 var _clone_seq := 1
+var _steer := {}
+var _block_shape := CircleShape2D.new()
+var _block_query := PhysicsShapeQueryParameters2D.new()
+var _ray := PhysicsRayQueryParameters2D.new()
 
 @onready var camera: Camera2D = $Camera2D
 @onready var unit_root: Node2D = $Units
@@ -57,6 +61,13 @@ var _clone_seq := 1
 func _ready() -> void:
 	camera.zoom = Vector2(32, 32)
 	camera.make_current()
+	unit_root.y_sort_enabled = true
+	_block_query.collide_with_bodies = true
+	_block_query.collide_with_areas = false
+	_block_query.shape = _block_shape
+	_ray.collide_with_bodies = true
+	_ray.collide_with_areas = false
+	_ray.hit_from_inside = false
 
 
 func start_match(data: Dictionary, record_results: bool = true, show_help: bool = false) -> void:
@@ -76,6 +87,7 @@ func start_match(data: Dictionary, record_results: bool = true, show_help: bool 
 	bursts.clear()
 	mega_fx.clear()
 	saber_fx.clear()
+	_steer.clear()
 	for child in unit_root.get_children():
 		child.free()
 	units.clear()
@@ -342,31 +354,51 @@ func blocked_circle(pos: Vector2, radius: float, team: int) -> bool:
 	if pos.x - radius < 1.0 or pos.y - radius < 1.5 or pos.x + radius > Balance.MAP_W - 1.0 or pos.y + radius > Balance.MAP_H - 1.5:
 		return true
 	var space := get_world_2d().direct_space_state
-	var params := PhysicsShapeQueryParameters2D.new()
-	var shape := CircleShape2D.new()
-	shape.radius = maxf(0.05, radius)
-	params.shape = shape
-	params.transform = Transform2D(0.0, pos)
-	params.collision_mask = mask_for(team)
-	params.collide_with_bodies = true
-	params.collide_with_areas = false
-	if not space.intersect_shape(params, 1).is_empty():
+	_block_shape.radius = maxf(0.05, radius)
+	_block_query.transform = Transform2D(0.0, pos)
+	_block_query.collision_mask = mask_for(team)
+	if not space.intersect_shape(_block_query, 1).is_empty():
 		return true
 	return keep_blocks(pos, team)
 
 
 func los(a: Vector2, b: Vector2, team: int) -> bool:
-	for i in 14:
-		var p := a.lerp(b, float(i + 1) / 14.0)
-		if blocked_circle(p, 0.175, team):
-			return false
-	return true
+	if a.distance_squared_to(b) < 0.04:
+		return true
+	var space := get_world_2d().direct_space_state
+	_ray.from = a
+	_ray.to = b
+	_ray.collision_mask = mask_for(team)
+	if not space.intersect_ray(_ray).is_empty():
+		return false
+	return not _segment_hits_keep(a, b, team)
+
+
+func _segment_hits_keep(a: Vector2, b: Vector2, team: int) -> bool:
+	var delta := b - a
+	var len2 := delta.length_squared()
+	for k in keeps:
+		if float(k["down"]) > 0.0:
+			continue
+		var center: Vector2 = k["pos"]
+		var t := 0.0
+		if len2 > 0.0001:
+			t = clampf((center - a).dot(delta) / len2, 0.0, 1.0)
+		if keep_blocks(a + delta * t, team):
+			return true
+	return false
 
 
 func steer_point(u, goal: Vector2) -> Vector2:
 	if los(u.global_position, goal, u.team):
 		return goal
-	var path: Array = Balance.astar(Balance.closest_node(u.global_position), Balance.closest_node(goal))
+	var start := Balance.closest_node(u.global_position)
+	var goal_id := Balance.closest_node(goal)
+	var cached: Dictionary = _steer.get(u.unit_id, {})
+	var path: Array = cached.get("path", [])
+	if str(cached.get("from", "")) != start or str(cached.get("to", "")) != goal_id:
+		path = Balance.astar(start, goal_id)
+		_steer[u.unit_id] = {"from": start, "to": goal_id, "path": path}
 	var here: float = u.global_position.distance_to(goal)
 	for id in path:
 		var n: Vector2 = Balance.NODES[id]
@@ -1235,8 +1267,8 @@ func update_shots(dt: float) -> void:
 			s.pos += Vector2(s.vx, s.vy) * dt / float(steps)
 			if s.kind == "fireball":
 				s.trail += speed * dt / float(steps)
-				while s.trail >= 0.55:
-					s.trail -= 0.55
+				while s.trail >= 1.6:
+					s.trail -= 1.6
 					drop_fire(s.pos)
 				var hit = fireball_hit(s)
 				if hit != null:
@@ -1367,10 +1399,10 @@ func drop_fire(at: Vector2) -> void:
 	var f := State.new()
 	f.pos = at
 	f.r = 0.45
-	f.t = 5.0
+	f.t = 2.4
 	fires.append(f)
-	if fires.size() > 420:
-		fires = fires.slice(fires.size() - 420)
+	if fires.size() > 40:
+		fires = fires.slice(fires.size() - 40)
 
 
 func standing_in_fire(u) -> bool:
@@ -1472,8 +1504,8 @@ func burst(pos: Vector2, color: Color, n: int, speed: float) -> void:
 		p.color = color
 		p.r = 0.08 + randf() * 0.12
 		bursts.append(p)
-	if bursts.size() > 240:
-		bursts = bursts.slice(bursts.size() - 240)
+	if bursts.size() > 48:
+		bursts = bursts.slice(bursts.size() - 48)
 
 
 func _tick_fires(dt: float) -> void:
@@ -1540,26 +1572,33 @@ func _sync_diamonds() -> void:
 
 func _sync_world() -> void:
 	for k in keeps:
-		var visual: Polygon2D = k["visual"]
+		var color := Color(0.95, 0.9, 0.78)
 		if float(k["down"]) > 0.0:
-			visual.color = Color(0.32, 0.28, 0.26, 0.55)
+			color = Color(0.32, 0.28, 0.26, 0.55)
 		elif int(k["owner"]) == 0:
-			visual.color = Color(0.86, 0.32, 0.42)
+			color = Color(0.86, 0.32, 0.42)
 		elif int(k["owner"]) == 1:
-			visual.color = Color(0.32, 0.55, 0.9)
-		else:
-			visual.color = Color(0.95, 0.9, 0.78)
+			color = Color(0.32, 0.55, 0.9)
+		_paint(k, color)
 	for group in [towers, [outpost]]:
 		for p in group:
 			if p == null:
 				continue
-			var vis: Polygon2D = p["visual"]
+			var color2 := Color(0.95, 0.9, 0.78)
 			if int(p["owner"]) == 0:
-				vis.color = Color(0.86, 0.32, 0.42)
+				color2 = Color(0.86, 0.32, 0.42)
 			elif int(p["owner"]) == 1:
-				vis.color = Color(0.32, 0.55, 0.9)
-			else:
-				vis.color = Color(0.96, 0.86, 0.55) if str(p.get("name", "")) == "Middle Outpost" else Color(0.95, 0.9, 0.78)
+				color2 = Color(0.32, 0.55, 0.9)
+			elif str(p.get("name", "")) == "Middle Outpost":
+				color2 = Color(0.96, 0.86, 0.55)
+			_paint(p, color2)
+
+
+func _paint(record: Dictionary, color: Color) -> void:
+	if record.get("_tint", null) == color:
+		return
+	record["_tint"] = color
+	(record["visual"] as Polygon2D).color = color
 
 
 func _separate(u) -> void:
@@ -1623,6 +1662,7 @@ func start_online_match(crimson: Dictionary, azure: Dictionary, crimson_peer: in
 	bursts.clear()
 	mega_fx.clear()
 	saber_fx.clear()
+	_steer.clear()
 	for child in unit_root.get_children():
 		child.free()
 	units.clear()

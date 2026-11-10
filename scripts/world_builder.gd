@@ -35,9 +35,9 @@ static func populate(match_node: Node2D) -> void:
 	_grass(parent)
 	_bounds(parent)
 	for poly in rivers:
-		_area_poly(parent, poly, Balance.LAYER_WATER, "water", Color(0.18, 0.58, 0.9, 0.95))
+		_poly(parent, poly, Color(0.18, 0.58, 0.9, 0.95))
 		_poly(parent, inset_poly(poly, 0.78), Color(0.55, 0.88, 1.0, 0.32))
-	_area_poly(parent, pond_s, Balance.LAYER_WATER, "water", Color(0.22, 0.64, 0.94, 0.95))
+	_poly(parent, pond_s, Color(0.22, 0.64, 0.94, 0.95))
 	_poly(parent, inset_poly(pond_s, 0.8), Color(0.62, 0.9, 1.0, 0.34))
 
 	var isles: Array = []
@@ -45,12 +45,11 @@ static func populate(match_node: Node2D) -> void:
 	isles.append({"pos": Vector2(96.8, 43.4) * 0.5, "r": 1.55 * 0.5})
 	for isle in isles:
 		if isle.has("poly"):
-			_area_poly(parent, isle["poly"], Balance.LAYER_ISLAND, "dry", Color(0.62, 0.4, 0.22, 1))
+			_poly(parent, isle["poly"], Color(0.62, 0.4, 0.22, 1))
 			_poly(parent, inset_poly(isle["poly"], 0.62), Color(0.55, 0.88, 0.36, 1))
 		else:
-			var circle := circle_poly(isle["pos"], float(isle["r"]), 18)
-			_area_poly(parent, circle, Balance.LAYER_ISLAND, "dry", Color(0.62, 0.4, 0.22, 1))
-			_poly(parent, circle_poly(isle["pos"], float(isle["r"]) * 0.72, 14), Color(0.55, 0.88, 0.36, 1))
+			_poly(parent, circle_poly(isle["pos"], float(isle["r"]), 12), Color(0.62, 0.4, 0.22, 1))
+			_poly(parent, circle_poly(isle["pos"], float(isle["r"]) * 0.72, 10), Color(0.55, 0.88, 0.36, 1))
 
 	var bridges: Array = []
 	var deck := 7.6
@@ -61,7 +60,7 @@ static func populate(match_node: Node2D) -> void:
 	for rect_item in bridge_specs:
 		var rect: Rect2 = rect_item
 		var poly := rect_poly(rect)
-		_area_poly(parent, poly, Balance.LAYER_BRIDGE, "dry", Color(0.78, 0.56, 0.3, 1))
+		_poly(parent, poly, Color(0.78, 0.56, 0.3, 1))
 		for plank in 4:
 			var y: float = rect.position.y + rect.size.y * (float(plank) + 0.5) / 4.0
 			_poly(parent, rect_poly(Rect2(rect.position.x + 0.08, y, rect.size.x - 0.16, 0.05)), Color(0.5, 0.34, 0.16, 0.9))
@@ -531,7 +530,7 @@ static func inset_poly(pts: PackedVector2Array, k: float) -> PackedVector2Array:
 
 
 static func _tufts(parent: Node2D) -> void:
-	for i in 90:
+	for i in 36:
 		var x := 2.0 + float(_mix(i * 17 + 3) % 8400) / 100.0
 		var y := 5.2 + float(_mix(i * 29 + 11) % 3800) / 100.0
 		if y > 44.0:
@@ -614,21 +613,6 @@ static func _poly(parent: Node, pts: PackedVector2Array, color: Color) -> Polygo
 	visual.color = color
 	parent.add_child(visual)
 	return visual
-
-
-static func _area_poly(parent: Node, pts: PackedVector2Array, layer: int, kind: String, color: Color) -> void:
-	var area := Area2D.new()
-	area.collision_layer = layer
-	area.collision_mask = 0
-	area.monitoring = false
-	area.monitorable = true
-	area.set_meta("kind", kind)
-	var col := CollisionPolygon2D.new()
-	col.polygon = pts
-	area.add_child(col)
-	parent.add_child(area)
-	if kind == "water" or kind == "dry":
-		_poly(parent, pts, color)
 
 
 static func _ring(parent: Node, pos: Vector2, radius: float, color: Color) -> void:
