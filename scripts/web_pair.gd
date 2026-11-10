@@ -6,14 +6,16 @@ extends RefCounted
 static var _booted := false
 
 const BOOT := """
-window.__bf = window.__bf || {role:'', status:'search', inbox:[], open:false, peer:null, conn:null, busy:false, gen:0, passes:0, waitTimer:0, down:0, blocked:0, badBrowser:false};
+window.__bf = window.__bf || {role:'', status:'search', inbox:[], open:false, peer:null, conn:null, busy:false, gen:0, passes:0, waitTimer:0, helloTimer:0, paired:false, down:0, blocked:0, badBrowser:false};
 window.bfCloud = {secure:true, host:'0.peerjs.com', port:443};
 window.bfStop = function(silent) {
   var box = window.__bf;
   box.gen += 1;
   if (box.waitTimer) { clearTimeout(box.waitTimer); box.waitTimer = 0; }
+  if (box.helloTimer) { clearInterval(box.helloTimer); box.helloTimer = 0; }
   box.open = false;
   box.busy = false;
+  box.paired = false;
   box.role = '';
   if (box.conn) { try { box.conn.close(); } catch (e) {} }
   if (box.peer) { try { box.peer.destroy(); } catch (e) {} }
@@ -73,25 +75,37 @@ window.bfWire = function(conn, gen, asHost) {
   box.conn = conn;
   conn.on('data', function(d) {
     if (gen !== window.__bf.gen) return;
+    window.__bf.paired = true;
+    if (window.__bf.helloTimer) { clearInterval(window.__bf.helloTimer); window.__bf.helloTimer = 0; }
     window.bfPush(d);
   });
   conn.on('close', function() {
-    if (gen !== window.__bf.gen) return;
+    if (gen !== window.__bf.gen || window.__bf.conn !== conn) return;
+    var paired = window.__bf.paired;
+    window.__bf.conn = null;
     window.__bf.open = false;
-    window.__bf.status = 'closed';
+    if (window.__bf.helloTimer) { clearInterval(window.__bf.helloTimer); window.__bf.helloTimer = 0; }
+    if (paired) window.__bf.status = 'closed';
   });
   conn.on('error', function() {
     if (gen !== window.__bf.gen) return;
     if (!window.__bf.open) window.__bf.blocked += 1;
   });
   if (asHost) {
-    var greeted = false;
     var greet = function() {
-      if (greeted || gen !== window.__bf.gen) return;
-      greeted = true;
+      if (gen !== window.__bf.gen || window.__bf.conn !== conn) return;
       window.__bf.open = true;
       if (window.__bf.waitTimer) { clearTimeout(window.__bf.waitTimer); window.__bf.waitTimer = 0; }
-      try { conn.send({t:'hello'}); } catch (e) {}
+      if (window.__bf.helloTimer) clearInterval(window.__bf.helloTimer);
+      window.__bf.helloTimer = setInterval(function() {
+        if (gen !== window.__bf.gen || window.__bf.paired || window.__bf.conn !== conn) {
+          clearInterval(window.__bf.helloTimer);
+          window.__bf.helloTimer = 0;
+          return;
+        }
+        try { conn.send({t:'hello'}); } catch (e) {}
+      }, 400);
+      try { conn.send({t:'hello'}); } catch (e2) {}
     };
     conn.on('open', greet);
     if (conn.open) greet();
@@ -102,39 +116,42 @@ window.bfGuest = function(gen, room, waitMs, done) {
   if (gen !== window.__bf.gen) return;
   var peer = new Peer(window.bfCloud);
   var settled = false;
-  function finish(ok) {
+  var timer = setTimeout(function() { finish('fail'); }, 8000);
+  function finish(result) {
     if (settled || gen !== window.__bf.gen) return;
     settled = true;
     clearTimeout(timer);
-    if (!ok) {
+    if (result !== 'joined') {
       try { peer.destroy(); } catch (e) {}
     }
-    done(ok);
+    done(result);
   }
-  var timer = setTimeout(function() { finish(false); }, waitMs);
   peer.on('open', function() {
     if (settled || gen !== window.__bf.gen) return;
-    var conn = peer.connect('blackforest' + room, {reliable:true});
+    clearTimeout(timer);
+    var conn = peer.connect('blackforest' + room, {reliable:true, serialization:'json'});
+    timer = setTimeout(function() { finish('fail'); }, waitMs);
     conn.on('data', function(d) {
       if (settled || gen !== window.__bf.gen) return;
-      if (!window.bfWire(conn, gen, false)) { finish(false); return; }
+      if (!window.bfWire(conn, gen, false)) { finish('fail'); return; }
       window.__bf.peer = peer;
       window.__bf.open = true;
       window.__bf.role = 'guest';
       window.__bf.status = 'guest';
+      window.__bf.paired = true;
       window.bfPush(d);
-      finish(true);
+      finish('joined');
     });
-    conn.on('close', function() { finish(false); });
-    conn.on('error', function() { window.__bf.blocked += 1; finish(false); });
+    conn.on('close', function() { finish('fail'); });
+    conn.on('error', function() { finish('fail'); });
   });
   peer.on('error', function(err) {
     if (settled || gen !== window.__bf.gen) return;
     var kind = err && err.type ? err.type : '';
-    if (kind === 'browser-incompatible') { window.__bf.status = 'error'; window.__bf.badBrowser = true; }
-    else if (kind === 'peer-unavailable' || kind === 'unavailable-id') window.__bf.blocked += 1;
-    else window.__bf.down += 1;
-    finish(false);
+    if (kind === 'browser-incompatible') { window.__bf.status = 'error'; window.__bf.badBrowser = true; finish('fail'); return; }
+    if (kind === 'peer-unavailable') { finish('empty'); return; }
+    window.__bf.down += 1;
+    finish('fail');
   });
 };
 window.bfHost = function(gen, room, done) {
@@ -186,12 +203,12 @@ window.bfSeek = function(gen, room) {
     window.__bf.status = (window.__bf.down > 0 && window.__bf.blocked === 0) ? 'error' : 'busy';
     return;
   }
-  window.bfGuest(gen, room, 700, function(joined) {
-    if (joined || gen !== window.__bf.gen || window.__bf.badBrowser) return;
+  window.bfGuest(gen, room, 10000, function(result) {
+    if (result === 'joined' || gen !== window.__bf.gen || window.__bf.badBrowser) return;
     window.bfHost(gen, room, function(hosted) {
       if (hosted || gen !== window.__bf.gen || window.__bf.badBrowser) return;
-      window.bfGuest(gen, room, 1200, function(joinedAgain) {
-        if (joinedAgain || gen !== window.__bf.gen || window.__bf.badBrowser) return;
+      window.bfGuest(gen, room, 15000, function(again) {
+        if (again === 'joined' || gen !== window.__bf.gen || window.__bf.badBrowser) return;
         window.bfSeek(gen, room + 1);
       });
     });
@@ -208,6 +225,8 @@ window.bfFind = function() {
   window.__bf.down = 0;
   window.__bf.blocked = 0;
   window.__bf.badBrowser = false;
+  window.__bf.paired = false;
+  if (window.__bf.helloTimer) { clearInterval(window.__bf.helloTimer); window.__bf.helloTimer = 0; }
   window.__bf.inbox = [];
   window.bfEnsure(function() {
     if (gen !== window.__bf.gen) return;

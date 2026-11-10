@@ -88,6 +88,9 @@ var browser_host := false
 var browser_started := false
 var browser_join_sent := false
 var browser_status := ""
+var browser_guest: Dictionary = {}
+var _browser_join_msec := 0
+var _browser_start_msec := 0
 
 
 func _ready() -> void:
@@ -590,6 +593,9 @@ func start_browser_match(profile: Dictionary) -> void:
 	browser_started = false
 	browser_join_sent = false
 	browser_status = ""
+	browser_guest = {}
+	_browser_join_msec = 0
+	_browser_start_msec = 0
 	pending_profile = _clean_profile(profile)
 	_status("Looking for an opponent...")
 	WebPair.start()
@@ -614,10 +620,15 @@ func _browser_poll() -> void:
 		if typeof(parsed) != TYPE_DICTIONARY:
 			continue
 		_browser_message(parsed)
-	if role == "client" and not browser_join_sent and bool(state.get("open", false)) and match_node == null:
+	var now := Time.get_ticks_msec()
+	if role == "client" and bool(state.get("open", false)) and match_node == null and now - _browser_join_msec >= 1000:
+		_browser_join_msec = now
 		browser_join_sent = true
 		WebPair.send_text(JSON.stringify({"t": "join", "profile": pending_profile}))
 		print("NET browser join")
+	if browser_host and browser_started and not input_peers.has(2) and match_node != null and is_instance_valid(match_node) and str(match_node.phase) == "play" and now - _browser_start_msec >= 1000:
+		_browser_start_msec = now
+		_send_browser_start()
 
 
 func _browser_status(js_status: String) -> void:
@@ -633,6 +644,8 @@ func _browser_status(js_status: String) -> void:
 		_status("Looking for an opponent...")
 	elif js_status == "host":
 		_status("Waiting for one opponent.")
+	elif js_status == "link":
+		_status("Connecting to an opponent...")
 	elif js_status == "guest":
 		_status("Connected. Waiting for one opponent.")
 	elif js_status == "busy":
@@ -648,10 +661,11 @@ func _browser_message(msg: Dictionary) -> void:
 	if kind == "hello":
 		return
 	if kind == "join" and browser_host:
-		if browser_started:
-			return
 		var raw = msg.get("profile", {})
 		if typeof(raw) != TYPE_DICTIONARY:
+			return
+		if browser_started:
+			_send_browser_start()
 			return
 		browser_started = true
 		_begin_browser_match(_clean_profile(raw))
@@ -686,16 +700,22 @@ func _begin_browser_match(guest_profile: Dictionary) -> void:
 	rooms.append(room)
 	_peer_room[1] = room_id
 	_peer_room[2] = room_id
+	browser_guest = guest_profile
 	WebPair.mark_busy()
+	_send_browser_start()
+	_status("Playing as Crimson.")
+	print("NET browser match units ", node.units.size())
+
+
+func _send_browser_start() -> void:
+	_browser_start_msec = Time.get_ticks_msec()
 	WebPair.send_text(JSON.stringify({
 		"t": "start",
 		"crimson": pending_profile,
-		"azure": guest_profile,
+		"azure": browser_guest,
 		"crimson_peer": 1,
 		"azure_peer": 2,
 	}))
-	_status("Playing as Crimson.")
-	print("NET browser match units ", node.units.size())
 
 
 func _begin_browser_guest(info: Dictionary) -> void:
@@ -1374,6 +1394,9 @@ func _reset_runtime() -> void:
 	browser_started = false
 	browser_join_sent = false
 	browser_status = ""
+	browser_guest = {}
+	_browser_join_msec = 0
+	_browser_start_msec = 0
 
 
 func _disk_profile() -> Dictionary:
