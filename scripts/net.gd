@@ -91,6 +91,7 @@ var browser_status := ""
 var browser_guest: Dictionary = {}
 var _browser_join_msec := 0
 var _browser_start_msec := 0
+var _browser_snap_ms := 0
 
 
 func _ready() -> void:
@@ -596,6 +597,7 @@ func start_browser_match(profile: Dictionary) -> void:
 	browser_guest = {}
 	_browser_join_msec = 0
 	_browser_start_msec = 0
+	_browser_snap_ms = 0
 	pending_profile = _clean_profile(profile)
 	_status("Looking for an opponent...")
 	WebPair.start()
@@ -615,11 +617,19 @@ func _browser_poll() -> void:
 		browser_status = js_status
 		_browser_status(js_status)
 	var lines: Array = state.get("lines", [])
+	var last_snap := ""
 	for line in lines:
 		var parsed = JSON.parse_string(str(line))
 		if typeof(parsed) != TYPE_DICTIONARY:
 			continue
+		if str(parsed.get("t", "")) == "snap":
+			last_snap = str(line)
+			continue
 		_browser_message(parsed)
+	if last_snap != "":
+		var snap_msg = JSON.parse_string(last_snap)
+		if typeof(snap_msg) == TYPE_DICTIONARY:
+			_browser_message(snap_msg)
 	var now := Time.get_ticks_msec()
 	if role == "client" and bool(state.get("open", false)) and match_node == null and now - _browser_join_msec >= 1000:
 		_browser_join_msec = now
@@ -745,6 +755,11 @@ func _begin_browser_guest(info: Dictionary) -> void:
 func _apply_browser_snap(blob: PackedByteArray) -> void:
 	if blob.is_empty() or role != "client":
 		return
+	if blob.size() >= 8:
+		var stamp := blob.decode_u64(0)
+		if stamp <= _browser_snap_ms:
+			return
+		_browser_snap_ms = stamp
 	snapshot_count += 1
 	if snapshot_count == 1:
 		print("NET snapshot ", blob.size())
@@ -878,7 +893,7 @@ func _predict_local() -> void:
 	elif buttons & BIT_ATTACK and player.carrying != null:
 		match_node.float_at(player.global_position + Vector2(0, -0.9), "CAN'T ATTACK", Color.WHITE)
 	if browser_link and not browser_host:
-		WebPair.send_text(JSON.stringify({"t": "mv", "seq": local_seq, "x": wish.x, "y": wish.y, "f": facing}))
+		WebPair.send_fast(JSON.stringify({"t": "mv", "seq": local_seq, "x": wish.x, "y": wish.y, "f": facing}))
 		if buttons != 0:
 			WebPair.send_text(JSON.stringify({"t": "bt", "seq": local_seq, "b": buttons}))
 		if local_seq == 1:
@@ -901,6 +916,21 @@ func _consume_inputs(node) -> Dictionary:
 		if id == 0:
 			continue
 		var q: Array = queues.get(id, [])
+		if browser_host and q.size() > 2:
+			var extra := 0
+			while q.size() > 2 and extra < 6:
+				var old: Dictionary = q.pop_front()
+				var old_wish := Vector2(float(old["x"]), float(old["y"]))
+				if old_wish.length_squared() > 1.0:
+					old_wish = old_wish.normalized()
+				u.wish = old_wish
+				u.facing = float(old["facing"])
+				u.predict_move(TICK_DT)
+				if node.has_method("eject_keep"):
+					node.eject_keep(u)
+				last_applied[id] = int(old["seq"])
+				extra += 1
+			queues[id] = q
 		var wish := Vector2.ZERO
 		var facing: float = u.facing
 		var seq := int(last_applied.get(id, 0))
@@ -1397,6 +1427,7 @@ func _reset_runtime() -> void:
 	browser_guest = {}
 	_browser_join_msec = 0
 	_browser_start_msec = 0
+	_browser_snap_ms = 0
 
 
 func _disk_profile() -> Dictionary:

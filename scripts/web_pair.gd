@@ -6,7 +6,7 @@ extends RefCounted
 static var _booted := false
 
 const BOOT := """
-window.__bf = window.__bf || {role:'', status:'search', inbox:[], open:false, peer:null, conn:null, busy:false, gen:0, passes:0, waitTimer:0, helloTimer:0, paired:false, down:0, blocked:0, badBrowser:false};
+window.__bf = window.__bf || {role:'', status:'search', inbox:[], open:false, peer:null, conn:null, fast:null, fastOpen:false, pendingSnap:'', roomPeer:'', busy:false, gen:0, passes:0, waitTimer:0, helloTimer:0, paired:false, down:0, blocked:0, badBrowser:false};
 window.bfCloud = {secure:true, host:'0.peerjs.com', port:443};
 window.bfStop = function(silent) {
   var box = window.__bf;
@@ -17,6 +17,11 @@ window.bfStop = function(silent) {
   box.busy = false;
   box.paired = false;
   box.role = '';
+  box.pendingSnap = '';
+  box.roomPeer = '';
+  box.fastOpen = false;
+  if (box.fast) { try { box.fast.close(); } catch (e0) {} }
+  box.fast = null;
   if (box.conn) { try { box.conn.close(); } catch (e) {} }
   if (box.peer) { try { box.peer.destroy(); } catch (e) {} }
   box.conn = null;
@@ -32,15 +37,86 @@ window.bfSend = function(s) {
   try { box.conn.send(payload); } catch (e2) {}
 };
 window.bfState = function() {
+  window.bfFlush();
   var box = window.__bf;
   if (!box) return 'missing<<S>><<S>>0<<S>>';
   var lines = box.inbox;
   box.inbox = [];
   return box.status + '<<S>>' + box.role + '<<S>>' + (box.open ? '1' : '0') + '<<S>>' + lines.join('<<NL>>');
 };
+window.bfIsSnap = function(line) {
+  return line.indexOf('"t":"snap"') !== -1 || line.indexOf('"t": "snap"') !== -1;
+};
 window.bfPush = function(d) {
   var line = typeof d === 'string' ? d : JSON.stringify(d);
-  if (line) window.__bf.inbox.push(line);
+  if (!line) return;
+  var box = window.__bf;
+  if (window.bfIsSnap(line)) {
+    var kept = [];
+    for (var i = 0; i < box.inbox.length; i++) {
+      if (!window.bfIsSnap(box.inbox[i])) kept.push(box.inbox[i]);
+    }
+    kept.push(line);
+    box.inbox = kept;
+    return;
+  }
+  box.inbox.push(line);
+};
+window.bfWaiting = function(conn) {
+  if (!conn) return 999999;
+  try {
+    var dc = conn.dataChannel || conn._dc;
+    if (dc && typeof dc.bufferedAmount === 'number') return dc.bufferedAmount;
+  } catch (e) {}
+  if (typeof conn.bufferSize === 'number') return conn.bufferSize;
+  return 0;
+};
+window.bfSendFast = function(s) {
+  var box = window.__bf;
+  var conn = (box && box.fast && box.fastOpen) ? box.fast : null;
+  if (!conn) { window.bfSend(s); return; }
+  var payload = s;
+  try { payload = JSON.parse(s); } catch (e) {}
+  try { conn.send(payload); } catch (e2) { window.bfSend(s); }
+};
+window.bfNoteSnap = function(b64) {
+  if (!window.__bf) return;
+  window.__bf.pendingSnap = b64;
+  window.bfFlush();
+};
+window.bfFlush = function() {
+  var box = window.__bf;
+  if (!box || !box.pendingSnap) return;
+  var conn = (box.fast && box.fastOpen) ? box.fast : box.conn;
+  if (!conn) return;
+  if (conn === box.conn && !box.open) return;
+  if (conn === box.fast && !box.fastOpen) return;
+  if (window.bfWaiting(conn) > 1200) return;
+  var body = box.pendingSnap;
+  box.pendingSnap = '';
+  try { conn.send({t:'snap', b:body}); }
+  catch (e) { box.pendingSnap = body; }
+};
+window.bfTakeFast = function(conn) {
+  var box = window.__bf;
+  if (box.fast && box.fast !== conn) { try { box.fast.close(); } catch (e) {} }
+  box.fast = conn;
+  box.fastOpen = false;
+  conn.on('data', function(d) { window.bfPush(d); });
+  conn.on('open', function() { if (window.__bf.fast === conn) window.__bf.fastOpen = true; });
+  conn.on('close', function() {
+    if (window.__bf.fast !== conn) return;
+    window.__bf.fast = null;
+    window.__bf.fastOpen = false;
+  });
+  conn.on('error', function() { if (window.__bf.fast === conn) window.__bf.fastOpen = false; });
+  if (conn.open) box.fastOpen = true;
+};
+window.bfOpenFast = function() {
+  var box = window.__bf;
+  if (!box.peer || !box.roomPeer || box.fast) return;
+  var conn = box.peer.connect(box.roomPeer, {reliable:false, serialization:'json', label:'fast', metadata:{ch:'fast'}});
+  window.bfTakeFast(conn);
 };
 window.bfEnsure = function(done) {
   if (typeof Peer !== 'undefined') { done(); return; }
@@ -135,11 +211,13 @@ window.bfGuest = function(gen, room, waitMs, done) {
       if (settled || gen !== window.__bf.gen) return;
       if (!window.bfWire(conn, gen, false)) { finish('fail'); return; }
       window.__bf.peer = peer;
+      window.__bf.roomPeer = conn.peer;
       window.__bf.open = true;
       window.__bf.role = 'guest';
       window.__bf.status = 'guest';
       window.__bf.paired = true;
       window.bfPush(d);
+      window.bfOpenFast();
       finish('joined');
     });
     conn.on('close', function() { finish('fail'); });
@@ -177,6 +255,8 @@ window.bfHost = function(gen, room, done) {
     window.__bf.status = 'host';
     peer.on('connection', function(conn) {
       if (gen !== window.__bf.gen) { try { conn.close(); } catch (e) {} return; }
+      var meta = conn.metadata || {};
+      if (conn.label === 'fast' || meta.ch === 'fast') { window.bfTakeFast(conn); return; }
       if (window.__bf.busy || window.__bf.conn) { try { conn.close(); } catch (e2) {} return; }
       window.bfWire(conn, gen, true);
     });
@@ -226,6 +306,11 @@ window.bfFind = function() {
   window.__bf.blocked = 0;
   window.__bf.badBrowser = false;
   window.__bf.paired = false;
+  window.__bf.pendingSnap = '';
+  window.__bf.roomPeer = '';
+  window.__bf.fastOpen = false;
+  if (window.__bf.fast) { try { window.__bf.fast.close(); } catch (e3) {} }
+  window.__bf.fast = null;
   if (window.__bf.helloTimer) { clearInterval(window.__bf.helloTimer); window.__bf.helloTimer = 0; }
   window.__bf.inbox = [];
   window.bfEnsure(function() {
@@ -270,10 +355,18 @@ static func send_text(text: String) -> void:
 	bridge.call("eval", "bfSend(" + JSON.stringify(text) + ")", true)
 
 
-static func send_snap(blob: PackedByteArray) -> void:
-	if blob.is_empty():
+static func send_fast(text: String) -> void:
+	var bridge = _bridge()
+	if bridge == null or not _booted or text == "":
 		return
-	send_text(JSON.stringify({"t": "snap", "b": Marshalls.raw_to_base64(blob)}))
+	bridge.call("eval", "bfSendFast(" + JSON.stringify(text) + ")", true)
+
+
+static func send_snap(blob: PackedByteArray) -> void:
+	var bridge = _bridge()
+	if bridge == null or not _booted or blob.is_empty():
+		return
+	bridge.call("eval", "bfNoteSnap(" + JSON.stringify(Marshalls.raw_to_base64(blob)) + ")", true)
 
 
 static func poll() -> Dictionary:
