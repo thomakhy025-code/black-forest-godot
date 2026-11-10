@@ -51,17 +51,13 @@ func _ready() -> void:
 
 func _on_net_status() -> void:
 	if online_status:
-		online_status.text = _lobby_status(Net.status)
-
-
-func _lobby_status(raw: String) -> String:
-	var text := raw.strip_edges()
-	if text.contains("not configured") or text.contains("no public server"):
-		return "Type the server's wss address, then Join. You wait for one opponent."
-	return text
+		online_status.text = Net.status
 
 
 func show_armory() -> void:
+	if Net.role != "offline" or Net.browser_link:
+		Net.leave(true)
+		return
 	_close_match()
 	_refresh_armory()
 	_show_screen("armory")
@@ -147,32 +143,44 @@ func _refresh_armory() -> void:
 
 
 func _open_online() -> void:
-	online_status.text = _lobby_status(Net.status)
+	if OS.has_feature("web"):
+		online_status.text = "Looking for an opponent..."
+		_show_screen("online")
+		_play_web()
+		return
+	online_status.text = Net.status
 	_show_screen("online")
+
+
+func _play_web() -> void:
+	var data: Dictionary = Profile.snapshot()
+	if str(data.get("gender", "")) != "male" and str(data.get("gender", "")) != "female":
+		data["gender"] = "female"
+	online_status.text = "Looking for an opponent..."
+	Net.start_browser_match({
+		"name": str(data.get("name", "You")),
+		"gender": str(data.get("gender", "female")),
+		"stats": data.get("stats", {}),
+	})
 
 
 func _host_online() -> void:
 	if OS.has_feature("web"):
-		online_status.text = "A browser cannot host the match. Type the server's wss address, then Join."
+		_play_web()
 		return
 	Net.use_websocket = false
 	Net.start_server(7777)
-	online_status.text = _lobby_status(Net.status)
+	online_status.text = Net.status
 
 
 func _join_online() -> void:
+	if OS.has_feature("web"):
+		_play_web()
+		return
 	var addr := address_edit.text.strip_edges()
-	var on_web := OS.has_feature("web")
 	if addr == "":
-		addr = str(Net.address).strip_edges() if on_web else "127.0.0.1"
-	if on_web and (addr == "" or addr.begins_with("pending.")):
-		online_status.text = "Type the server's wss address, then Join. You wait for one opponent."
-		address_edit.grab_focus()
-		return
-	if on_web and (addr == "127.0.0.1" or addr == "localhost"):
-		online_status.text = "This website joins a WebSocket server on the internet, not this computer."
-		return
-	var prt := int(port_edit.text) if port_edit.text.is_valid_int() else (int(Net.port) if on_web else 7777)
+		addr = "127.0.0.1"
+	var prt := int(port_edit.text) if port_edit.text.is_valid_int() else 7777
 	var data: Dictionary = Profile.snapshot()
 	if str(data.get("gender", "")) != "male" and str(data.get("gender", "")) != "female":
 		data["gender"] = "female"
@@ -181,7 +189,7 @@ func _join_online() -> void:
 		"gender": str(data.get("gender", "female")),
 		"stats": data.get("stats", {}),
 	})
-	online_status.text = _lobby_status(Net.status)
+	online_status.text = Net.status
 
 
 func _disconnect_online() -> void:
@@ -310,28 +318,26 @@ func _build_online() -> void:
 	var col := _center_column(online)
 	col.add_child(_title_label("Play online", 28))
 	var on_web := OS.has_feature("web")
-	var host := str(Net.address).strip_edges()
-	var hint_text := "Join the match server. You wait for one opponent, play as Crimson or Azure, and bots fill the other eight seats. Other pairs can play at the same time. The server decides hits, diamonds, and the win. This website connects with a secure WebSocket, so the address looks like wss://your-server. Versus Robots stays on this machine."
-	if on_web and host != "" and not host.begins_with("pending."):
-		hint_text = "Join the match server. You wait for one opponent, play as Crimson or Azure, and bots fill the other eight seats. Other pairs can play at the same time. The server decides hits, diamonds, and the win. Your client predicts your own movement."
-	elif not on_web:
-		hint_text = "Host a match on this computer, or join one. You wait for one opponent, play as Crimson or Azure, and bots fill the other eight seats. Other pairs can play at the same time. The server decides hits, diamonds, and the win. Host listens on UDP 7777. A wss address uses WebSocket. Versus Robots stays on this machine."
+	var hint_text := "Play online looks for one opponent. You do not type an address. You play as Crimson or Azure, bots fill the other eight seats, and other pairs can play at the same time. The match decides hits, diamonds, and the win. Versus Robots stays on this machine."
+	if not on_web:
+		hint_text = "Host a match on this computer, or join one. You wait for one opponent, play as Crimson or Azure, and bots fill the other eight seats. Other pairs can play at the same time. The server decides hits, diamonds, and the win. Host listens on UDP 7777. Versus Robots stays on this machine."
 	var hint := _title_label(hint_text, 15)
 	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	hint.custom_minimum_size = Vector2(640, 0)
 	col.add_child(hint)
-	address_edit = LineEdit.new()
-	address_edit.text = host if on_web and host != "" and not host.begins_with("pending.") else ("" if on_web else "127.0.0.1")
-	address_edit.placeholder_text = "wss://server" if on_web else "Server address"
-	address_edit.custom_minimum_size = Vector2(320, 36)
-	address_edit.text_submitted.connect(func(_text): _join_online())
-	col.add_child(address_edit)
-	port_edit = LineEdit.new()
-	port_edit.text = str(Net.port) if on_web else "7777"
-	port_edit.placeholder_text = "Port"
-	port_edit.custom_minimum_size = Vector2(160, 36)
-	col.add_child(port_edit)
-	online_status = _title_label(_lobby_status(Net.status), 15)
+	if not on_web:
+		address_edit = LineEdit.new()
+		address_edit.text = "127.0.0.1"
+		address_edit.placeholder_text = "Server address"
+		address_edit.custom_minimum_size = Vector2(320, 36)
+		address_edit.text_submitted.connect(func(_text): _join_online())
+		col.add_child(address_edit)
+		port_edit = LineEdit.new()
+		port_edit.text = "7777"
+		port_edit.placeholder_text = "Port"
+		port_edit.custom_minimum_size = Vector2(160, 36)
+		col.add_child(port_edit)
+	online_status = _title_label(Net.status, 15)
 	online_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	online_status.custom_minimum_size = Vector2(640, 0)
 	col.add_child(online_status)
@@ -340,9 +346,12 @@ func _build_online() -> void:
 	row.add_theme_constant_override("separation", 8)
 	col.add_child(row)
 	var join := Button.new()
-	join.text = "Join"
+	join.text = "Find opponent" if on_web else "Join"
 	join.focus_mode = Control.FOCUS_NONE
-	join.pressed.connect(_join_online)
+	if on_web:
+		join.pressed.connect(_play_web)
+	else:
+		join.pressed.connect(_join_online)
 	if not on_web:
 		var host_button := Button.new()
 		host_button.text = "Host"

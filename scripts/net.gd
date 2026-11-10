@@ -7,7 +7,8 @@ extends Node
 ##   godot --headless --path <project> -- --server --websocket
 ## Desktop client:
 ##   godot --path <project> -- --client --address 127.0.0.1 --port 7777
-## The website build uses WebSocket and the host in web_endpoint.gd.
+## The website build pairs two browsers on its own. They do not type an address.
+## A typed WebSocket host in web_endpoint.gd is only for a dedicated server.
 ## Versus Robots never opens a peer.
 ##
 ## Play Online pairs the next two people into their own match. Bots fill the other
@@ -18,6 +19,7 @@ extends Node
 const Balance = preload("res://scripts/balance.gd")
 const MatchScene = preload("res://scenes/match.tscn")
 const WebEndpoint = preload("res://scripts/web_endpoint.gd")
+const WebPair = preload("res://scripts/web_pair.gd")
 
 const DEFAULT_PORT := 7777
 const PLAYERS_PER_MATCH := 2
@@ -81,6 +83,11 @@ var _boot_msec := 0
 var _closing := false
 var _finished := false
 var _smoke_ready_msec := 0
+var browser_link := false
+var browser_host := false
+var browser_started := false
+var browser_join_sent := false
+var browser_status := ""
 
 
 func _ready() -> void:
@@ -95,18 +102,17 @@ func _ready() -> void:
 		use_websocket = true
 		address = str(WebEndpoint.HOST).strip_edges()
 		port = int(WebEndpoint.PORT)
-		if address == "" or address.begins_with("pending."):
-			_status("Play Online is not configured. This site has no public server address. Versus Robots stays on this machine.")
-		else:
-			_status("Play Online waits for one opponent at %s:%d. Other pairs can play at the same time." % [address, port])
+		_status("Play online looks for one opponent. You do not type an address. Versus Robots stays on this machine.")
 	_parse_args()
 
 
 func _physics_process(delta: float) -> void:
+	if browser_link and not _closing:
+		_browser_poll()
 	if role == "client":
 		_advance_clock(delta)
 		_poll_latency(delta)
-		if match_node == null and not _closing:
+		if match_node == null and not _closing and not browser_link:
 			_join_timer += delta
 			if _join_timer >= 0.6:
 				_join_timer = 0.0
@@ -281,8 +287,11 @@ func _websocket_url(addr: String, prt: int) -> String:
 func leave(back_to_armory: bool = true) -> void:
 	if _closing:
 		return
-	var show := back_to_armory and role == "client"
+	var show := back_to_armory and (role == "client" or browser_link) and not smoke
 	_closing = true
+	WebPair.stop()
+	browser_link = false
+	browser_host = false
 	_clear_match()
 	_shutdown_peer()
 	_reset_runtime()
@@ -371,13 +380,17 @@ func push_world_state(server_ms: int, units: Dictionary) -> void:
 
 
 func publish_result(result: Dictionary, source: Node = null) -> void:
-	if role != "server" or not _can_rpc() or source == null:
+	if role != "server" or source == null:
 		return
 	var room := _room_for_match(source)
 	if room.is_empty():
 		return
 	var kind := str(result.get("type", "draw"))
 	var team := int(result.get("team", -1))
+	if bool(room.get("browser", false)):
+		WebPair.send_text(JSON.stringify({"t": "end", "k": kind, "team": team}))
+	if not _can_rpc():
+		return
 	for pid in room["peers"]:
 		var peer_id := int(pid)
 		if multiplayer.get_peers().has(peer_id):
@@ -559,6 +572,204 @@ func rpc_return_latency(client_time: int) -> void:
 	latency = new_latency
 
 
+func start_browser_match(profile: Dictionary) -> void:
+	if not OS.has_feature("web"):
+		_status("On this computer, use Host or Join. The website pairs two players on its own.")
+		return
+	if _closing or (match_node != null and is_instance_valid(match_node)):
+		return
+	_closing = true
+	WebPair.stop()
+	_clear_match()
+	_shutdown_peer()
+	_reset_runtime()
+	_closing = false
+	role = "offline"
+	browser_link = true
+	browser_host = false
+	browser_started = false
+	browser_join_sent = false
+	browser_status = ""
+	pending_profile = _clean_profile(profile)
+	_status("Looking for an opponent...")
+	WebPair.start()
+
+
+func _browser_poll() -> void:
+	var state := WebPair.poll()
+	var js_role := str(state.get("role", ""))
+	if js_role == "host" and role == "offline":
+		role = "server"
+		browser_host = true
+	elif js_role == "guest" and role == "offline":
+		role = "client"
+		browser_host = false
+	var js_status := str(state.get("status", ""))
+	if js_status != browser_status:
+		browser_status = js_status
+		_browser_status(js_status)
+	var lines: Array = state.get("lines", [])
+	for line in lines:
+		var parsed = JSON.parse_string(str(line))
+		if typeof(parsed) != TYPE_DICTIONARY:
+			continue
+		_browser_message(parsed)
+	if role == "client" and not browser_join_sent and bool(state.get("open", false)) and match_node == null:
+		browser_join_sent = true
+		WebPair.send_text(JSON.stringify({"t": "join", "profile": pending_profile}))
+		print("NET browser join")
+
+
+func _browser_status(js_status: String) -> void:
+	if js_status == "closed":
+		if match_node != null and is_instance_valid(match_node) and str(match_node.phase) == "play":
+			match_node.end_match("left", -1)
+		elif match_node == null:
+			_status("Could not reach an opponent. Press Find opponent to try again.")
+		return
+	if match_node != null:
+		return
+	if js_status == "search":
+		_status("Looking for an opponent...")
+	elif js_status == "host":
+		_status("Waiting for one opponent.")
+	elif js_status == "guest":
+		_status("Connected. Waiting for one opponent.")
+	elif js_status == "busy":
+		_status("Matches are full right now. Press Find opponent to try again.")
+	elif js_status == "missing":
+		_status("The match service did not load. Refresh the page and press Play online again.")
+	elif js_status == "error":
+		_status("Could not reach the match service. Press Find opponent to try again.")
+
+
+func _browser_message(msg: Dictionary) -> void:
+	var kind := str(msg.get("t", ""))
+	if kind == "hello":
+		return
+	if kind == "join" and browser_host:
+		if browser_started:
+			return
+		var raw = msg.get("profile", {})
+		if typeof(raw) != TYPE_DICTIONARY:
+			return
+		browser_started = true
+		_begin_browser_match(_clean_profile(raw))
+	elif kind == "start" and role == "client":
+		_begin_browser_guest(msg)
+	elif kind == "snap" and role == "client":
+		_apply_browser_snap(Marshalls.base64_to_raw(str(msg.get("b", ""))))
+	elif kind == "mv" and browser_host:
+		_queue_browser_move(2, msg)
+	elif kind == "bt" and browser_host:
+		_apply_browser_buttons(2, msg)
+	elif kind == "end" and role == "client" and match_node != null and is_instance_valid(match_node):
+		if str(match_node.phase) == "play":
+			match_node.end_match(str(msg.get("k", "draw")), int(msg.get("team", -1)))
+
+
+func _begin_browser_match(guest_profile: Dictionary) -> void:
+	if match_node != null:
+		return
+	var node := _host_match()
+	node.start_online_match(pending_profile, guest_profile, 1, 2, 1, true, true)
+	var room_id := _room_seq
+	_room_seq += 1
+	var room := {
+		"id": room_id,
+		"peers": [1, 2],
+		"match": node,
+		"host": node,
+		"browser": true,
+		"keep_result": true,
+	}
+	rooms.append(room)
+	_peer_room[1] = room_id
+	_peer_room[2] = room_id
+	WebPair.mark_busy()
+	WebPair.send_text(JSON.stringify({
+		"t": "start",
+		"crimson": pending_profile,
+		"azure": guest_profile,
+		"crimson_peer": 1,
+		"azure_peer": 2,
+	}))
+	_status("Playing as Crimson.")
+	print("NET browser match units ", node.units.size())
+
+
+func _begin_browser_guest(info: Dictionary) -> void:
+	if match_node != null:
+		return
+	var crimson = info.get("crimson", {})
+	var azure = info.get("azure", {})
+	if typeof(crimson) != TYPE_DICTIONARY or typeof(azure) != TYPE_DICTIONARY:
+		return
+	var node := _host_match()
+	node.start_online_match(
+		_clean_profile(crimson),
+		_clean_profile(azure),
+		int(info.get("crimson_peer", 1)),
+		int(info.get("azure_peer", 2)),
+		2,
+		true,
+		false
+	)
+	_status("Playing as Azure.")
+	print("NET browser guest")
+	if has_held:
+		node.apply_net_bytes(held_snapshot)
+		has_held = false
+
+
+func _apply_browser_snap(blob: PackedByteArray) -> void:
+	if blob.is_empty() or role != "client":
+		return
+	snapshot_count += 1
+	if snapshot_count == 1:
+		print("NET snapshot ", blob.size())
+	if match_node == null:
+		held_snapshot = blob
+		has_held = true
+		return
+	match_node.apply_net_bytes(blob)
+
+
+func _queue_browser_move(id: int, msg: Dictionary) -> void:
+	var seq := int(msg.get("seq", 0))
+	var applied := int(last_applied.get(id, 0))
+	if seq <= applied:
+		return
+	var q: Array = queues.get(id, [])
+	if q.size() > 0 and int(q[q.size() - 1]["seq"]) >= seq:
+		return
+	q.append({"seq": seq, "x": float(msg.get("x", 0.0)), "y": float(msg.get("y", 0.0)), "facing": float(msg.get("f", 0.0))})
+	while q.size() > 30:
+		q.pop_front()
+	queues[id] = q
+	last_input_msec[id] = Time.get_ticks_msec()
+	input_peers[id] = int(input_peers.get(id, 0)) + 1
+
+
+func _apply_browser_buttons(id: int, msg: Dictionary) -> void:
+	var buttons := int(msg.get("b", 0))
+	if buttons == 0:
+		return
+	var seq := int(msg.get("seq", 0))
+	if seq <= int(action_seq.get(id, -1)):
+		return
+	var room := _room_for_peer(id)
+	if room.is_empty():
+		return
+	var node = room.get("match")
+	if node == null or not is_instance_valid(node):
+		return
+	action_seq[id] = seq
+	var unit = node.unit_by_peer(id)
+	if unit:
+		node.apply_net_buttons(unit, buttons)
+
+
 func _server_tick() -> void:
 	if rooms.is_empty():
 		return
@@ -566,27 +777,43 @@ func _server_tick() -> void:
 	for item in rooms:
 		var room: Dictionary = item
 		var node = room.get("match")
-		if node == null or not is_instance_valid(node) or str(node.phase) != "play":
+		if node == null or not is_instance_valid(node):
+			finished.append(int(room.get("id", 0)))
+			continue
+		if str(node.phase) != "play":
+			if bool(room.get("keep_result", false)):
+				continue
 			finished.append(int(room.get("id", 0)))
 			continue
 		var ack := _consume_inputs(node)
+		if browser_host and bool(room.get("browser", false)) and node.player:
+			var buttons := _take_buttons()
+			if buttons != 0:
+				node.apply_net_buttons(node.player, buttons)
 		node.tick(TICK_DT)
 		if str(node.phase) != "play":
-			finished.append(int(room.get("id", 0)))
-			continue
-		if not _can_rpc():
+			if not bool(room.get("keep_result", false)):
+				finished.append(int(room.get("id", 0)))
 			continue
 		var blob: PackedByteArray = node.pack_net_bytes(ack)
-		for pid in room["peers"]:
-			var peer_id := int(pid)
-			if multiplayer.get_peers().has(peer_id):
-				rpc_snapshot.rpc_id(peer_id, blob)
+		var sent := false
+		if browser_host and bool(room.get("browser", false)):
+			WebPair.send_snap(blob)
+			sent = true
+		if _can_rpc():
+			for pid in room["peers"]:
+				var peer_id := int(pid)
+				if multiplayer.get_peers().has(peer_id):
+					rpc_snapshot.rpc_id(peer_id, blob)
+					sent = true
+		if not sent:
+			continue
 		snapshot_count += 1
 		if snapshot_count == 1:
 			print("NET snapshot")
 	for room_id in finished:
 		_drop_room(int(room_id))
-	if not finished.is_empty():
+	if not finished.is_empty() and not browser_host:
 		_server_status()
 
 
@@ -630,6 +857,13 @@ func _predict_local() -> void:
 			match_node.float_at(player.global_position + Vector2(0, -0.9), "NO WEAPON", Color.WHITE)
 	elif buttons & BIT_ATTACK and player.carrying != null:
 		match_node.float_at(player.global_position + Vector2(0, -0.9), "CAN'T ATTACK", Color.WHITE)
+	if browser_link and not browser_host:
+		WebPair.send_text(JSON.stringify({"t": "mv", "seq": local_seq, "x": wish.x, "y": wish.y, "f": facing}))
+		if buttons != 0:
+			WebPair.send_text(JSON.stringify({"t": "bt", "seq": local_seq, "b": buttons}))
+		if local_seq == 1:
+			print("NET input sent")
+		return
 	if not _can_rpc():
 		return
 	rpc_input.rpc_id(1, local_seq, wish.x, wish.y, facing, 0)
@@ -1135,6 +1369,11 @@ func _reset_runtime() -> void:
 	has_held = false
 	local_seq = 0
 	_acc = 0.0
+	browser_link = false
+	browser_host = false
+	browser_started = false
+	browser_join_sent = false
+	browser_status = ""
 
 
 func _disk_profile() -> Dictionary:

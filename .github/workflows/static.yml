@@ -51,6 +51,11 @@ jobs:
           test -f build/web/index.wasm
           test -f build/web/index.pck
 
+      - name: Cache-bust the game pack
+        run: python .github/workflows/cache_bust.py
+        env:
+          SHA: ${{ github.sha }}
+
       - name: Setup Pages
         uses: actions/configure-pages@v5
 

@@ -375,7 +375,7 @@ func _restart() -> void:
 
 
 func _rematch() -> void:
-	if sim and sim.net_role == "client":
+	if sim and sim.net_role != "offline":
 		Net.leave(true)
 		return
 	var main := get_tree().root.get_node_or_null("Main")

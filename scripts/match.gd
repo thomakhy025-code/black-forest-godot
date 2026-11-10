@@ -12,6 +12,7 @@ const UnitScene = preload("res://scenes/unit.tscn")
 
 var phase := "boot"
 var net_role := "offline"
+var headless_server := false
 var paused := false
 var record := true
 var time := 0.0
@@ -267,7 +268,7 @@ func tick(dt: float) -> void:
 		if clock <= 0.0:
 			end_match("draw")
 	shake = maxf(0.0, shake - dt * 1.8)
-	if net_role == "server":
+	if headless_server:
 		return
 	_tick_fx(dt)
 	_sync_world()
@@ -317,7 +318,7 @@ func _bot(id: String, bot_name: String, team: int, gender: String, role: String,
 
 
 func _spawn_diamonds() -> void:
-	var show_gem := net_role != "server"
+	var show_gem := not headless_server
 	for home in diamond_homes:
 		var d := State.new()
 		d.team = int(home["team"])
@@ -757,7 +758,7 @@ func detonate_mega(u, ch) -> void:
 			continue
 		try_hit(o, Balance.MEGA_DAMAGE, u, Color(1, 0.35, 0.35))
 	burst(ch.pos, Color(1, 0.69, 0.63), 18, 4.0)
-	if net_role != "server":
+	if not headless_server:
 		var fx := State.new()
 		fx.pos = ch.pos
 		fx.t = 1.7
@@ -775,7 +776,7 @@ func detonate_saber(u, ch) -> void:
 		if not in_saber_lane(ch, o.global_position):
 			continue
 		try_hit(o, Balance.SABER_DAMAGE, u, Color(1, 0.88, 0.54))
-	if net_role != "server":
+	if not headless_server:
 		var fx := State.new()
 		fx.pos = ch.pos
 		fx.ang = ch.ang
@@ -864,7 +865,7 @@ func spawn_clones(u) -> void:
 		if old.node and is_instance_valid(old.node):
 			old.node.queue_free()
 	u.clones.clear()
-	var show_body := net_role != "server"
+	var show_body := not headless_server
 	for side in [-PI / 4.0, PI / 4.0]:
 		var host: Node2D = null
 		if show_body:
@@ -1541,7 +1542,7 @@ func end_match(kind: String, team: int = -1) -> void:
 	result = {"type": kind, "team": team}
 	if record and Profile and net_role == "offline":
 		Profile.note_match(kind == "win", kind == "draw")
-	elif record and Profile and net_role == "client":
+	elif record and Profile and (net_role == "client" or not headless_server):
 		var mine := -1
 		if player:
 			mine = int(player.team)
@@ -1550,12 +1551,12 @@ func end_match(kind: String, team: int = -1) -> void:
 		Net.publish_result(result, self)
 	if kind == "win":
 		_sfx("win")
-	if net_role != "server" and hud and hud.has_method("show_result"):
+	if not headless_server and hud and hud.has_method("show_result"):
 		hud.show_result(result)
 
 
 func float_at(pos: Vector2, text: String, color: Color) -> void:
-	if net_role == "server":
+	if headless_server:
 		return
 	var f := State.new()
 	f.pos = pos
@@ -1569,7 +1570,7 @@ func float_at(pos: Vector2, text: String, color: Color) -> void:
 
 
 func burst(pos: Vector2, color: Color, n: int, speed: float) -> void:
-	if net_role == "server":
+	if headless_server:
 		return
 	for _i in n:
 		var a := randf() * TAU
@@ -1694,7 +1695,7 @@ func _show_record(record: Dictionary, shown: bool) -> void:
 
 
 func _sfx(id: String) -> void:
-	if net_role == "server":
+	if headless_server:
 		return
 	Sfx.play(id)
 
@@ -1750,8 +1751,10 @@ func _seg_dist(p: Vector2, a: Vector2, b: Vector2) -> float:
 	return p.distance_to(a + delta * t)
 
 
-func start_online_match(crimson: Dictionary, azure: Dictionary, crimson_peer: int, azure_peer: int, local_peer: int, record_results: bool) -> void:
-	net_role = "server" if local_peer == 0 else "client"
+func start_online_match(crimson: Dictionary, azure: Dictionary, crimson_peer: int, azure_peer: int, local_peer: int, record_results: bool, draw_local: bool = false) -> void:
+	var authority := local_peer == 0 or draw_local
+	net_role = "server" if authority else "client"
+	headless_server = authority and not draw_local
 	set_physics_process(false)
 	record = record_results
 	phase = "boot"
@@ -1773,22 +1776,22 @@ func start_online_match(crimson: Dictionary, azure: Dictionary, crimson_peer: in
 		child.free()
 	units.clear()
 	diamonds.clear()
-	WorldBuilder.populate(self, net_role != "server")
+	WorldBuilder.populate(self, not headless_server)
 	_water_dirty = true
 	_spawn_diamonds()
 	_spawn_online_units(crimson, azure, crimson_peer, azure_peer, local_peer)
 	if player == null:
 		player = unit_by_id("crimson")
-	if net_role != "server" and player and is_instance_valid(player) and camera:
+	if not headless_server and player and is_instance_valid(player) and camera:
 		camera.global_position = player.global_position
 	if local_peer != 0 and camera:
 		camera.make_current()
-	if net_role == "server":
+	if headless_server:
 		_park_server_space()
 	phase = "play"
-	if net_role != "server" and hud and hud.has_method("bind_match"):
+	if not headless_server and hud and hud.has_method("bind_match"):
 		hud.bind_match(self)
-	if net_role != "server" and hud and hud.has_method("hide_help"):
+	if not headless_server and hud and hud.has_method("hide_help"):
 		hud.hide_help()
 
 
