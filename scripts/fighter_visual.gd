@@ -42,6 +42,11 @@ func sync_from(u) -> void:
 	casting = u.cast != null
 	channeling = u.channel != null
 	dashing = u.dash != null
+	if u.sim != null and str(u.sim.net_role) == "client":
+		var pose := int(u.net_pose)
+		casting = pose == 3
+		channeling = pose == 4
+		dashing = pose == 6
 	dead = bool(u.dead)
 	carrying = u.carrying != null
 	weapon_kind = str(u.weapon)

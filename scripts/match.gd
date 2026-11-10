@@ -60,7 +60,8 @@ var _ray := PhysicsRayQueryParameters2D.new()
 
 func _ready() -> void:
 	camera.zoom = Vector2(32, 32)
-	camera.make_current()
+	if not (get_parent() is SubViewport):
+		camera.make_current()
 	unit_root.y_sort_enabled = true
 	_block_query.collide_with_bodies = true
 	_block_query.collide_with_areas = false
@@ -1474,7 +1475,7 @@ func end_match(kind: String, team: int = -1) -> void:
 			mine = int(player.team)
 		Profile.note_match(kind == "win" and team == mine, kind == "draw")
 	if net_role == "server":
-		Net.publish_result(result)
+		Net.publish_result(result, self)
 	if kind == "win":
 		Sfx.play("win")
 	if hud and hud.has_method("show_result"):
@@ -1674,7 +1675,8 @@ func start_online_match(crimson: Dictionary, azure: Dictionary, crimson_peer: in
 		player = unit_by_id("crimson")
 	if player and is_instance_valid(player):
 		camera.global_position = player.global_position
-	camera.make_current()
+	if local_peer != 0:
+		camera.make_current()
 	phase = "play"
 	if hud and hud.has_method("bind_match"):
 		hud.bind_match(self)
@@ -1847,6 +1849,10 @@ func pack_net_bytes(ack: Dictionary) -> PackedByteArray:
 	if outpost != null:
 		var owner3 := int(outpost["owner"])
 		buf.put_u8(255 if owner3 < 0 else owner3)
+	_pack_shots(buf)
+	_pack_fires(buf)
+	_pack_cooldowns(buf)
+	_pack_doors(buf)
 	var kill_text := ""
 	if kill_call != null:
 		kill_text = str(kill_call.get("text", ""))
@@ -1936,6 +1942,10 @@ func _decode_net_bytes(raw: PackedByteArray) -> Dictionary:
 	for _p in point_n:
 		var owner2 := buf.get_u8()
 		points.append(-1 if owner2 == 255 else int(owner2))
+	var shot_rows := _read_shots(buf)
+	var fire_rows := _read_fires(buf)
+	var cd_rows := _read_cooldowns(buf)
+	var door_rows := _read_doors(buf)
 	var kill_n := buf.get_u8()
 	var kill_text := ""
 	if kill_n > 0:
@@ -1968,6 +1978,10 @@ func _decode_net_bytes(raw: PackedByteArray) -> Dictionary:
 		"gems": gems,
 		"keeps": keep_rows,
 		"points": points,
+		"shots": shot_rows,
+		"fires": fire_rows,
+		"cds": cd_rows,
+		"doors": door_rows,
 		"kill": kill_text,
 		"result_type": result_type,
 		"result_team": -1 if result_team_b == 255 else int(result_team_b)
@@ -2046,6 +2060,10 @@ func apply_net_snapshot(blob: Dictionary) -> void:
 		Net.push_world_state(server_ms, remote_poses)
 	_apply_net_gems(blob.get("gems", []))
 	_apply_net_props(blob.get("keeps", []), blob.get("points", []))
+	_apply_net_shots(blob.get("shots", []))
+	_apply_net_fires(blob.get("fires", []))
+	_apply_net_cds(blob.get("cds", []))
+	_apply_net_doors(blob.get("doors", []))
 	var kill_text := str(blob.get("kill", ""))
 	if kill_text != "":
 		if kill_call == null or str(kill_call.get("text", "")) != kill_text:
@@ -2054,6 +2072,161 @@ func apply_net_snapshot(blob: Dictionary) -> void:
 		end_match(str(blob.get("result_type", "draw")), int(blob.get("result_team", -1)))
 	_sync_world()
 	_sync_diamonds()
+
+
+func _pack_shots(buf: StreamPeerBuffer) -> void:
+	var list: Array = []
+	for s in shots:
+		if list.size() >= 16:
+			break
+		if s.kind != "fireball" and s.kind != "gem":
+			continue
+		list.append(s)
+	buf.put_u8(list.size())
+	for s in list:
+		buf.put_u8(1 if s.kind == "fireball" else 2)
+		buf.put_float(s.pos.x)
+		buf.put_float(s.pos.y)
+		buf.put_float(s.vx)
+		buf.put_float(s.vy)
+		buf.put_u8(clampi(int(s.team), 0, 255))
+
+
+func _pack_fires(buf: StreamPeerBuffer) -> void:
+	var n := mini(fires.size(), 40)
+	buf.put_u8(n)
+	var sent := 0
+	for f in fires:
+		if sent >= n:
+			break
+		buf.put_float(f.pos.x)
+		buf.put_float(f.pos.y)
+		buf.put_float(float(f.r))
+		buf.put_float(float(f.t))
+		sent += 1
+
+
+func _pack_cooldowns(buf: StreamPeerBuffer) -> void:
+	var humans: Array = []
+	for u in units:
+		if int(u.peer_id) != 0:
+			humans.append(u)
+	var n := mini(humans.size(), 2)
+	buf.put_u8(n)
+	var sent := 0
+	for u in humans:
+		if sent >= n:
+			break
+		buf.put_u32(int(u.peer_id))
+		var kit: Array = Balance.WEAPON_KITS.get(str(u.weapon), [])
+		for i in 3:
+			var sid := str(kit[i]) if i < kit.size() else ""
+			buf.put_float(float(u.cds.get(sid, 0.0)) if sid != "" else 0.0)
+		sent += 1
+
+
+func _pack_doors(buf: StreamPeerBuffer) -> void:
+	var doors: Array = []
+	for w in walls:
+		if str(w.get("kind", "")) == "door":
+			doors.append(w)
+	var n := mini(doors.size(), 16)
+	buf.put_u8(n)
+	var sent := 0
+	for w in doors:
+		if sent >= n:
+			break
+		buf.put_u8(clampi(int(round(float(w["hp"]))), 0, 255))
+		sent += 1
+
+
+func _read_shots(buf: StreamPeerBuffer) -> Array:
+	var rows: Array = []
+	var n := buf.get_u8()
+	for _i in n:
+		rows.append([buf.get_u8(), buf.get_float(), buf.get_float(), buf.get_float(), buf.get_float(), buf.get_u8()])
+	return rows
+
+
+func _read_fires(buf: StreamPeerBuffer) -> Array:
+	var rows: Array = []
+	var n := buf.get_u8()
+	for _i in n:
+		rows.append([buf.get_float(), buf.get_float(), buf.get_float(), buf.get_float()])
+	return rows
+
+
+func _read_cooldowns(buf: StreamPeerBuffer) -> Array:
+	var rows: Array = []
+	var n := buf.get_u8()
+	for _i in n:
+		rows.append([buf.get_u32(), buf.get_float(), buf.get_float(), buf.get_float()])
+	return rows
+
+
+func _read_doors(buf: StreamPeerBuffer) -> Array:
+	var rows: Array = []
+	var n := buf.get_u8()
+	for _i in n:
+		rows.append(buf.get_u8())
+	return rows
+
+
+func _apply_net_shots(rows: Array) -> void:
+	var next: Array = []
+	for row in rows:
+		if typeof(row) != TYPE_ARRAY or row.size() < 6:
+			continue
+		var s := State.new()
+		s.kind = "fireball" if int(row[0]) == 1 else "gem"
+		s.pos = Vector2(float(row[1]), float(row[2]))
+		s.vx = float(row[3])
+		s.vy = float(row[4])
+		s.team = int(row[5])
+		next.append(s)
+	shots = next
+
+
+func _apply_net_fires(rows: Array) -> void:
+	var next: Array = []
+	for row in rows:
+		if typeof(row) != TYPE_ARRAY or row.size() < 4:
+			continue
+		var f := State.new()
+		f.pos = Vector2(float(row[0]), float(row[1]))
+		f.r = float(row[2])
+		f.t = float(row[3])
+		next.append(f)
+	fires = next
+
+
+func _apply_net_cds(rows: Array) -> void:
+	if player == null:
+		return
+	var kit: Array = Balance.WEAPON_KITS.get(str(player.weapon), [])
+	for row in rows:
+		if typeof(row) != TYPE_ARRAY or row.size() < 4:
+			continue
+		if int(row[0]) != int(player.peer_id):
+			continue
+		for i in 3:
+			if i >= kit.size():
+				break
+			player.cds[str(kit[i])] = float(row[i + 1])
+
+
+func _apply_net_doors(rows: Array) -> void:
+	var i := 0
+	for w in walls:
+		if str(w.get("kind", "")) != "door":
+			continue
+		if i >= rows.size():
+			break
+		var hp := float(rows[i])
+		i += 1
+		w["hp"] = hp
+		w["shape"].disabled = hp <= 0.0
+		w["visual"].visible = hp > 0.0
 
 
 func _apply_net_gems(gems: Array) -> void:

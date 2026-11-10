@@ -1,5 +1,5 @@
 extends Node
-## Dedicated server for the 5v5 match, using Godot's high-level multiplayer API.
+## Dedicated server for many 5v5 matches, using Godot's high-level multiplayer API.
 ##
 ## Desktop server (UDP 7777):
 ##   godot --headless --path <project> -- --server
@@ -7,20 +7,21 @@ extends Node
 ##   godot --headless --path <project> -- --server --websocket
 ## Desktop client:
 ##   godot --path <project> -- --client --address 127.0.0.1 --port 7777
-## The website build always uses WebSocket and the host in web_endpoint.gd.
+## The website build uses WebSocket and the host in web_endpoint.gd.
 ## Versus Robots never opens a peer.
 ##
-## The listen process runs the match. Each client sends its own input every tick and
-## does not wait for the other team. The server simulates hits, diamonds, and the win.
-## A client predicts its own walk. Everyone else is drawn from a world-state buffer
-## 100 ms in the past, using a clock synced to the server.
+## Play Online pairs the next two people into their own match. Bots fill the other
+## eight seats. Each client sends its own input. The server simulates that match and
+## sends snapshots only to its two humans. A client predicts its own walk. Everyone
+## else is drawn from a world-state buffer 100 ms in the past.
 
 const Balance = preload("res://scripts/balance.gd")
 const MatchScene = preload("res://scenes/match.tscn")
 const WebEndpoint = preload("res://scripts/web_endpoint.gd")
 
 const DEFAULT_PORT := 7777
-const MAX_CLIENTS := 2
+const PLAYERS_PER_MATCH := 2
+const MAX_CONNECTIONS := 32
 const TICK_HZ := 30
 const TICK_DT := 1.0 / 30.0
 const INTERP_OFFSET_MS := 100
@@ -45,7 +46,11 @@ var port := DEFAULT_PORT
 var smoke := false
 var smoke_name := "You"
 
-var seats: Array = []
+var waiting: Array = []
+var rooms: Array = []
+var _peer_room := {}
+var _room_seq := 1
+var rooms_root: Node = null
 var queues := {}
 var last_wish := {}
 var last_applied := {}
@@ -91,9 +96,9 @@ func _ready() -> void:
 		address = str(WebEndpoint.HOST).strip_edges()
 		port = int(WebEndpoint.PORT)
 		if address == "" or address.begins_with("pending."):
-			_status("Play online needs the public WebSocket server. Versus Robots stays on this machine.")
+			_status("Play Online is not configured. This site has no public server address. Versus Robots stays on this machine.")
 		else:
-			_status("Play online uses WebSocket at %s:%d. Versus Robots stays on this machine." % [address, port])
+			_status("Play Online waits for one opponent at %s:%d. Other pairs can play at the same time." % [address, port])
 	_parse_args()
 
 
@@ -167,12 +172,8 @@ func start_server(prt: int) -> void:
 			_fail("create_server %s" % error_string(err))
 		return
 	multiplayer.multiplayer_peer = peer
-	if use_websocket:
-		_status("Dedicated server listening for WebSocket on port %d. Waiting for 2 players." % prt)
-		print("NET listening websocket ", prt)
-	else:
-		_status("Dedicated server listening on UDP %d. Waiting for 2 players." % prt)
-		print("NET listening udp ", prt)
+	_server_status()
+	print("NET listening ", "websocket " if use_websocket else "udp ", prt)
 
 
 func start_client(addr: String, prt: int, profile: Dictionary) -> void:
@@ -219,7 +220,7 @@ func _open_server(prt: int) -> Error:
 	var enet: MultiplayerPeer = ClassDB.instantiate("ENetMultiplayerPeer") as MultiplayerPeer
 	if enet == null:
 		return ERR_UNAVAILABLE
-	var err_code := int(enet.call("create_server", prt, MAX_CLIENTS))
+	var err_code := int(enet.call("create_server", prt, MAX_CONNECTIONS))
 	if err_code != OK:
 		return err_code as Error
 	var host: Object = enet.get("host")
@@ -369,44 +370,48 @@ func push_world_state(server_ms: int, units: Dictionary) -> void:
 		world_states.pop_front()
 
 
-func publish_result(result: Dictionary) -> void:
-	if role != "server" or not _can_rpc():
+func publish_result(result: Dictionary, source: Node = null) -> void:
+	if role != "server" or not _can_rpc() or source == null:
 		return
-	rpc_result.rpc(str(result.get("type", "draw")), int(result.get("team", -1)))
+	var room := _room_for_match(source)
+	if room.is_empty():
+		return
+	var kind := str(result.get("type", "draw"))
+	var team := int(result.get("team", -1))
+	for pid in room["peers"]:
+		var peer_id := int(pid)
+		if multiplayer.get_peers().has(peer_id):
+			rpc_result.rpc_id(peer_id, kind, team)
 
 
 @rpc("any_peer", "reliable")
 func rpc_join(profile: Dictionary) -> void:
 	if role != "server":
 		return
-	if not smoke:
-		_reclaim_abandoned_match()
-	if match_node != null:
-		return
 	var id := multiplayer.get_remote_sender_id()
-	var already := false
-	for seat in seats:
-		if int(seat["peer_id"]) == id:
-			already = true
-			break
-	if not already:
-		if seats.size() >= MAX_CLIENTS:
-			return
-		var clean := _clean_profile(profile)
-		seats.append({"peer_id": id, "profile": clean})
-		_status("Players %d/2." % seats.size())
-		print("NET join ", id, " ", str(clean["name"]))
-	if seats.size() == MAX_CLIENTS and match_node == null:
-		_begin_server_match()
-	if _can_rpc() and multiplayer.get_peers().has(id):
-		rpc_lobby.rpc_id(id, seats.size())
+	if id <= 0 or _is_waiting(id) or _peer_room.has(id):
+		return
+	if multiplayer.get_peers().size() > MAX_CONNECTIONS:
+		return
+	var clean := _clean_profile(profile)
+	print("NET join ", id, " ", str(clean["name"]))
+	while not waiting.is_empty() and not multiplayer.get_peers().has(int(waiting[0]["peer_id"])):
+		waiting.pop_front()
+	if waiting.size() < PLAYERS_PER_MATCH - 1:
+		waiting.append({"peer_id": id, "profile": clean})
+		_server_status()
+		if _can_rpc() and multiplayer.get_peers().has(id):
+			rpc_lobby.rpc_id(id, waiting.size())
+		return
+	var other: Dictionary = waiting.pop_front()
+	_begin_room(other, {"peer_id": id, "profile": clean})
 
 
 @rpc("authority", "reliable")
-func rpc_lobby(count: int) -> void:
+func rpc_lobby(_count: int) -> void:
 	if role != "client" or not _from_server() or match_node != null:
 		return
-	_status("Connected. Waiting for the other player. Players %d/2." % count)
+	_status("Connected. Waiting for one opponent.")
 
 
 @rpc("authority", "reliable")
@@ -456,15 +461,21 @@ func rpc_input(seq: int, x: float, y: float, facing: float, _buttons: int) -> vo
 
 @rpc("any_peer", "reliable")
 func rpc_action(seq: int, buttons: int) -> void:
-	if role != "server" or match_node == null or buttons == 0:
+	if role != "server" or buttons == 0:
 		return
 	var id := multiplayer.get_remote_sender_id()
+	var room := _room_for_peer(id)
+	if room.is_empty():
+		return
+	var node = room.get("match")
+	if node == null or not is_instance_valid(node):
+		return
 	if seq <= int(action_seq.get(id, -1)):
 		return
 	action_seq[id] = seq
-	var unit = match_node.unit_by_peer(id)
+	var unit = node.unit_by_peer(id)
 	if unit:
-		match_node.apply_net_buttons(unit, buttons)
+		node.apply_net_buttons(unit, buttons)
 
 
 @rpc("authority", "unreliable_ordered")
@@ -549,17 +560,34 @@ func rpc_return_latency(client_time: int) -> void:
 
 
 func _server_tick() -> void:
-	if match_node == null or not is_instance_valid(match_node) or match_node.phase != "play":
+	if rooms.is_empty():
 		return
-	var ack := _consume_inputs()
-	match_node.tick(TICK_DT)
-	if match_node.phase != "play" or not _can_rpc():
-		return
-	var blob: PackedByteArray = match_node.pack_net_bytes(ack)
-	rpc_snapshot.rpc(blob)
-	snapshot_count += 1
-	if snapshot_count == 1:
-		print("NET snapshot")
+	var finished: Array = []
+	for item in rooms:
+		var room: Dictionary = item
+		var node = room.get("match")
+		if node == null or not is_instance_valid(node) or str(node.phase) != "play":
+			finished.append(int(room.get("id", 0)))
+			continue
+		var ack := _consume_inputs(node)
+		node.tick(TICK_DT)
+		if str(node.phase) != "play":
+			finished.append(int(room.get("id", 0)))
+			continue
+		if not _can_rpc():
+			continue
+		var blob: PackedByteArray = node.pack_net_bytes(ack)
+		for pid in room["peers"]:
+			var peer_id := int(pid)
+			if multiplayer.get_peers().has(peer_id):
+				rpc_snapshot.rpc_id(peer_id, blob)
+		snapshot_count += 1
+		if snapshot_count == 1:
+			print("NET snapshot")
+	for room_id in finished:
+		_drop_room(int(room_id))
+	if not finished.is_empty():
+		_server_status()
 
 
 func _client_tick() -> void:
@@ -611,10 +639,10 @@ func _predict_local() -> void:
 		print("NET input sent")
 
 
-func _consume_inputs() -> Dictionary:
+func _consume_inputs(node) -> Dictionary:
 	var ack := {}
 	var now := Time.get_ticks_msec()
-	for u in match_node.units:
+	for u in node.units:
 		var id := int(u.peer_id)
 		if id == 0:
 			continue
@@ -804,28 +832,112 @@ func _take_buttons() -> int:
 	return b
 
 
-func _begin_server_match() -> void:
-	var node := _host_match()
-	var crimson: Dictionary = seats[0]
-	var azure: Dictionary = seats[1]
-	node.start_online_match(
-		crimson["profile"],
-		azure["profile"],
-		int(crimson["peer_id"]),
-		int(azure["peer_id"]),
-		0,
-		false
-	)
-	_status("Match running on UDP %d." % port)
-	print("NET match units ", node.units.size())
+func _server_status() -> void:
+	var kind := "WebSocket" if use_websocket else "UDP"
+	_status("Dedicated server listening for %s on port %d. Waiting %d. Matches %d." % [kind, port, waiting.size(), rooms.size()])
+
+
+func _is_waiting(id: int) -> bool:
+	for row in waiting:
+		if int(row["peer_id"]) == id:
+			return true
+	return false
+
+
+func _room_by_id(room_id: int) -> Dictionary:
+	for item in rooms:
+		var found: Dictionary = item
+		if int(found.get("id", -1)) == room_id:
+			return found
+	return {}
+
+
+func _room_for_peer(id: int) -> Dictionary:
+	if not _peer_room.has(id):
+		return {}
+	return _room_by_id(int(_peer_room[id]))
+
+
+func _room_for_match(node: Node) -> Dictionary:
+	for item in rooms:
+		var found: Dictionary = item
+		if found.get("match") == node:
+			return found
+	return {}
+
+
+func _host_server_match() -> Node:
+	if rooms_root == null or not is_instance_valid(rooms_root):
+		rooms_root = Node.new()
+		rooms_root.name = "Rooms"
+		add_child(rooms_root)
+	var view := SubViewport.new()
+	view.world_2d = World2D.new()
+	view.render_target_update_mode = SubViewport.UPDATE_DISABLED
+	view.size = Vector2i(2, 2)
+	view.handle_input_locally = false
+	view.gui_disable_input = true
+	rooms_root.add_child(view)
+	var node := MatchScene.instantiate()
+	view.add_child(node)
+	return node
+
+
+func _begin_room(crimson: Dictionary, azure: Dictionary) -> void:
+	var node := _host_server_match()
+	if node == null or not is_instance_valid(node):
+		waiting.push_front(crimson)
+		return
+	var c_id := int(crimson["peer_id"])
+	var a_id := int(azure["peer_id"])
+	node.start_online_match(crimson["profile"], azure["profile"], c_id, a_id, 0, false)
+	var room_id := _room_seq
+	_room_seq += 1
+	var room := {"id": room_id, "peers": [c_id, a_id], "match": node, "host": node.get_parent()}
+	rooms.append(room)
+	_peer_room[c_id] = room_id
+	_peer_room[a_id] = room_id
+	_server_status()
+	print("NET match units ", node.units.size(), " rooms ", rooms.size())
 	if not _can_rpc():
 		return
-	rpc_start.rpc({
+	var info := {
 		"crimson": crimson["profile"],
 		"azure": azure["profile"],
-		"crimson_peer": int(crimson["peer_id"]),
-		"azure_peer": int(azure["peer_id"])
-	})
+		"crimson_peer": c_id,
+		"azure_peer": a_id,
+	}
+	if multiplayer.get_peers().has(c_id):
+		rpc_start.rpc_id(c_id, info)
+	if multiplayer.get_peers().has(a_id):
+		rpc_start.rpc_id(a_id, info)
+
+
+func _drop_room(room_id: int) -> void:
+	var room := _room_by_id(room_id)
+	if room.is_empty():
+		return
+	var host = room.get("host")
+	if host and is_instance_valid(host):
+		host.queue_free()
+	else:
+		var node = room.get("match")
+		if node and is_instance_valid(node):
+			node.queue_free()
+	for pid in room.get("peers", []):
+		var peer_id := int(pid)
+		_peer_room.erase(peer_id)
+		queues.erase(peer_id)
+		last_wish.erase(peer_id)
+		last_applied.erase(peer_id)
+		last_input_msec.erase(peer_id)
+		action_seq.erase(peer_id)
+	var next: Array = []
+	for item in rooms:
+		var found: Dictionary = item
+		if int(found.get("id", -1)) != room_id:
+			next.append(found)
+	rooms = next
 
 
 func _host_match() -> Node:
@@ -844,42 +956,40 @@ func _host_match() -> Node:
 
 func _on_peer_connected(id: int) -> void:
 	print("NET peer ", id)
-	if role == "server" and use_websocket and multiplayer.get_peers().size() > MAX_CLIENTS:
+	if role == "server" and multiplayer.get_peers().size() > MAX_CONNECTIONS:
 		if peer != null:
 			peer.disconnect_peer(id)
 		print("NET refused extra peer ", id)
 		return
 	if role == "server":
-		_status("Peer %d connected. Players %d/2." % [id, seats.size()])
+		_server_status()
 
 
 func _on_peer_disconnected(id: int) -> void:
 	print("NET peer left ", id)
 	if role != "server" or _closing:
 		return
-	var was_seated := false
-	var next: Array = []
-	for seat in seats:
-		if int(seat["peer_id"]) == id:
-			was_seated = true
-		else:
-			next.append(seat)
-	seats = next
-	queues.erase(id)
-	last_wish.erase(id)
-	last_applied.erase(id)
-	last_input_msec.erase(id)
-	var playing := false
-	if match_node != null and is_instance_valid(match_node) and str(match_node.get("phase")) == "play":
-		playing = true
-	if was_seated and playing and not smoke:
-		match_node.end_match("left", -1)
-	if was_seated and not smoke:
-		_open_lobby_again()
-		if playing:
-			_kick_remaining_peers.call_deferred()
-	elif match_node == null:
-		_status("Players %d/2." % seats.size())
+	var next_wait: Array = []
+	for row in waiting:
+		if int(row["peer_id"]) != id:
+			next_wait.append(row)
+	waiting = next_wait
+	var room := _room_for_peer(id)
+	if room.is_empty():
+		queues.erase(id)
+		last_wish.erase(id)
+		last_applied.erase(id)
+		last_input_msec.erase(id)
+		action_seq.erase(id)
+		_server_status()
+		return
+	if smoke:
+		return
+	var node = room.get("match")
+	if node and is_instance_valid(node) and str(node.phase) == "play":
+		node.end_match("left", -1)
+	_drop_room(int(room.get("id", 0)))
+	_server_status()
 
 
 func _send_join() -> void:
@@ -888,57 +998,10 @@ func _send_join() -> void:
 	rpc_join.rpc_id(1, pending_profile)
 
 
-func _reclaim_abandoned_match() -> void:
-	if match_node == null or not is_instance_valid(match_node):
-		match_node = null
-		return
-	if str(match_node.get("phase")) == "play" and _live_seats() >= MAX_CLIENTS:
-		return
-	print("NET reclaim abandoned match")
-	_open_lobby_again()
-
-
-func _live_seats() -> int:
-	var peers: PackedInt32Array = multiplayer.get_peers()
-	var live := 0
-	for seat in seats:
-		if peers.has(int(seat["peer_id"])):
-			live += 1
-	return live
-
-
-func _open_lobby_again() -> void:
-	if match_node and is_instance_valid(match_node):
-		match_node.queue_free()
-	match_node = null
-	queues.clear()
-	last_wish.clear()
-	last_applied.clear()
-	last_input_msec.clear()
-	action_seq.clear()
-	input_peers.clear()
-	var peers: PackedInt32Array = multiplayer.get_peers()
-	var kept: Array = []
-	for seat in seats:
-		if peers.has(int(seat["peer_id"])):
-			kept.append(seat)
-	seats = kept
-	var kind := "WebSocket" if use_websocket else "UDP"
-	_status("Dedicated server listening for %s on port %d. Players %d/2." % [kind, port, seats.size()])
-
-
-func _kick_remaining_peers() -> void:
-	if peer == null or smoke:
-		return
-	var ids: PackedInt32Array = multiplayer.get_peers()
-	for id in ids:
-		peer.disconnect_peer(int(id))
-
-
 func _on_connected() -> void:
 	if role != "client":
 		return
-	_status("Connected. Waiting for the other player.")
+	_status("Connected. Waiting for one opponent.")
 	_join_timer = 0.0
 	print("NET connected id ", multiplayer.get_unique_id())
 	rpc_fetch_server_time.rpc_id(1, Time.get_ticks_msec())
@@ -991,7 +1054,7 @@ func _smoke_watch() -> void:
 			elif Time.get_ticks_msec() - _smoke_ready_msec > 800:
 				_pass("server snapshots=%d" % snapshot_count)
 		elif elapsed > 20.0:
-			_fail("server timeout snapshots=%d seats=%d inputs=%s" % [snapshot_count, seats.size(), str(input_peers)])
+			_fail("server timeout snapshots=%d waiting=%d rooms=%d inputs=%s" % [snapshot_count, waiting.size(), rooms.size(), str(input_peers)])
 	elif role == "client":
 		if snapshot_count >= 8 and local_seq >= 5 and match_node != null:
 			_pass("client snapshots=%d inputs=%d" % [snapshot_count, local_seq])
@@ -1033,6 +1096,13 @@ func _shutdown_peer() -> void:
 
 
 func _clear_match() -> void:
+	var ids: Array = []
+	for item in rooms:
+		var room: Dictionary = item
+		ids.append(int(room.get("id", 0)))
+	for room_id in ids:
+		_drop_room(int(room_id))
+	waiting.clear()
 	if match_node and is_instance_valid(match_node):
 		match_node.queue_free()
 	match_node = null
@@ -1042,7 +1112,9 @@ func _clear_match() -> void:
 
 
 func _reset_runtime() -> void:
-	seats.clear()
+	waiting.clear()
+	rooms.clear()
+	_peer_room.clear()
 	queues.clear()
 	last_wish.clear()
 	last_applied.clear()

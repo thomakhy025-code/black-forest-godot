@@ -1,5 +1,5 @@
 extends RefCounted
-## Public WebSocket address baked into the website build.
-## The HTML5 client reads this. It is not a local machine address.
-const HOST := "fossil-stem-consecutive-excerpt.trycloudflare.com"
+## Public WebSocket host baked into the website build.
+## Leave HOST empty until a live server exists. Play Online then says the server is not configured.
+const HOST := ""
 const PORT := 443

@@ -1,6 +1,6 @@
 extends Node
 ## Title, skill points, and the Versus Robots match.
-## Play online joins a dedicated server. The server process is started with --server.
+## Play Online pairs two people on a dedicated server. The server process is started with --server.
 
 const MatchScene = preload("res://scenes/match.tscn")
 
@@ -149,7 +149,10 @@ func _join_online() -> void:
 	var on_web := OS.has_feature("web")
 	if addr == "":
 		addr = str(Net.address) if on_web else "127.0.0.1"
-	if on_web and (addr == "" or addr == "127.0.0.1" or addr == "localhost" or addr.begins_with("pending.")):
+	if on_web and (addr == "" or addr.begins_with("pending.")):
+		online_status.text = "Play Online is not configured. This site has no public server address."
+		return
+	if on_web and (addr == "127.0.0.1" or addr == "localhost"):
 		online_status.text = "This website joins the public WebSocket server, not this computer."
 		return
 	var prt := int(port_edit.text) if port_edit.text.is_valid_int() else (int(Net.port) if on_web else 7777)
@@ -290,9 +293,12 @@ func _build_online() -> void:
 	var col := _center_column(online)
 	col.add_child(_title_label("Play online", 28))
 	var on_web := OS.has_feature("web")
-	var hint_text := "Join the public match server over WebSocket. The first player is Crimson, the second is Azure, and bots fill the other eight seats. The server decides hits, diamonds, and the win. Your client predicts your own movement. Versus Robots does not use this server."
-	if not on_web:
-		hint_text = "Join a dedicated server. The first player is Crimson, the second is Azure, and bots fill the other eight seats. The server decides hits, diamonds, and the win. Your client predicts your own movement. A desktop server listens on UDP 7777. The website uses WebSocket. Versus Robots does not use this server."
+	var host := str(Net.address).strip_edges()
+	var hint_text := "Play Online is not configured. This site has no public server address. Versus Robots stays on this machine."
+	if on_web and host != "" and not host.begins_with("pending."):
+		hint_text = "Play Online waits for one opponent. You are Crimson or Azure, bots fill the other eight seats, and other pairs can play at the same time. The server decides hits, diamonds, and the win. Your client predicts your own movement. Versus Robots does not use this server."
+	elif not on_web:
+		hint_text = "Play Online waits for one opponent on the server you enter. You are Crimson or Azure, bots fill the other eight seats, and other pairs can play at the same time. The server decides hits, diamonds, and the win. Your client predicts your own movement. A desktop server listens on UDP 7777. The website uses WebSocket. Versus Robots does not use this server."
 	var hint := _title_label(hint_text, 15)
 	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	hint.custom_minimum_size = Vector2(640, 0)
