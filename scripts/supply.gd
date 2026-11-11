@@ -65,6 +65,7 @@ static func chop(match_node, u) -> void:
 			match_node.float_at(u.global_position + Vector2(0, -0.9), item.to_upper(), Color(0.8, 0.95, 0.55))
 		else:
 			spill(match_node, pos, _one(item))
+			match_node.float_at(u.global_position + Vector2(0, -1.3), "BAG FULL", Color(1, 0.86, 0.35))
 
 
 static func give(u, item: String) -> bool:
@@ -264,10 +265,10 @@ static func pack(match_node, buf: StreamPeerBuffer) -> void:
 		buf.put_u8(clampi(int(door.get("wood", 0)), 0, 9))
 		buf.put_u8(clampi(int(door.get("fiber", 0)), 0, 9))
 		door_n += 1
-	buf.put_u8(mini(match_node.nodes.size(), 32))
+	buf.put_u8(mini(match_node.nodes.size(), 48))
 	var node_n := 0
 	for n in match_node.nodes:
-		if node_n >= 32:
+		if node_n >= 48:
 			break
 		var kind_i := _kind_id(str(n.get("kind", "tree")))
 		buf.put_u8(kind_i)

@@ -16,6 +16,7 @@ var clock_label: Label
 var weapon_label: Label
 var buff_label: Label
 var carry_label: Label
+var bag_banner: Label
 var kill_label: Label
 var skill_row: HBoxContainer
 var actions: HBoxContainer
@@ -147,6 +148,8 @@ func _process(_delta: float) -> void:
 	if buff_label.text != next_buff:
 		buff_label.text = next_buff
 	var bag_line := "Wood %d   Hide %d   Fiber %d" % [player.wood, player.hide, player.fiber]
+	if bag_banner:
+		bag_banner.text = _bag_reminder(player)
 	if player.carrying != null:
 		carry_label.text = "Diamond — half speed, no attacks. F throws.  " + bag_line
 	elif player.bag_total() > 0:
@@ -201,6 +204,21 @@ func _process(_delta: float) -> void:
 	if minimap and _map_wait >= 0.12:
 		_map_wait = 0.0
 		minimap.queue_redraw()
+
+
+func _bag_reminder(player) -> String:
+	var full := PackedStringArray()
+	if int(player.wood) >= Balance.BAG_CAP:
+		full.append("Wood")
+	if int(player.hide) >= Balance.BAG_CAP:
+		full.append("Hide")
+	if int(player.fiber) >= Balance.BAG_CAP:
+		full.append("Fiber")
+	if full.is_empty():
+		return ""
+	if full.size() == 3:
+		return "Bag full. Drop it with F."
+	return "%s full. Drop it with F." % ", ".join(full)
 
 
 func _objective() -> String:
@@ -455,8 +473,11 @@ func _build() -> void:
 	row.add_child(mid)
 	obj_label = _label("Steal the Azure diamond.", 16)
 	gem_label = _label("", 13)
+	bag_banner = _label("", 18)
+	bag_banner.add_theme_color_override("font_color", Color(1, 0.86, 0.35))
 	mid.add_child(obj_label)
 	mid.add_child(gem_label)
+	mid.add_child(bag_banner)
 	var side := VBoxContainer.new()
 	side.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.add_child(side)

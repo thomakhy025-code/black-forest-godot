@@ -45,24 +45,17 @@ static func populate(match_node: Node2D, decorate: bool = true) -> void:
 	for poly in rivers:
 		_poly(parent, poly, Color(0.08, 0.28, 0.52, 0.96))
 		_poly(parent, inset_poly(poly, 0.72), Color(0.45, 0.82, 1.0, 0.4))
-	for spot in [Vector2(25.2, 22.5), Vector2(25.2, 29.0), Vector2(62.8, 22.5), Vector2(62.8, 29.0)]:
-		_stamp(parent, "river.png", spot, 2.5, PI * 0.5)
 	_poly(parent, pond_s, Color(0.07, 0.32, 0.58, 0.96))
 	_poly(parent, inset_poly(pond_s, 0.72), Color(0.55, 0.9, 1.0, 0.42))
-	_stamp(parent, "pond.png", Vector2(44.0, 26.0), 13.0)
 
 	var isles: Array = []
-	isles.append({"pos": Vector2(88.2, 50.4) * 0.5, "poly": isle_s, "r": 0.0})
-	isles.append({"pos": Vector2(96.8, 43.4) * 0.5, "r": 1.55 * 0.5})
+	isles.append({"pos": Vector2(88.2, 50.4) * 0.5, "poly": isle_s, "r": 0.0, "h": 3.4})
+	isles.append({"pos": Vector2(96.8, 43.4) * 0.5, "r": 1.55 * 0.5, "h": 1.45})
 	for isle in isles:
-		if isle.has("poly"):
-			_drop(parent, isle["poly"], Vector2(0.06, 0.1))
-			_poly(parent, isle["poly"], Color(0.42, 0.26, 0.12, 1))
-			_poly(parent, inset_poly(isle["poly"], 0.72), Color(0.36, 0.58, 0.2, 1))
-		else:
-			_drop(parent, circle_poly(isle["pos"], float(isle["r"]), 10), Vector2(0.06, 0.1))
-			_poly(parent, circle_poly(isle["pos"], float(isle["r"]), 12), Color(0.42, 0.26, 0.12, 1))
-			_poly(parent, circle_poly(isle["pos"] + Vector2(-0.04, -0.04), float(isle["r"]) * 0.7, 10), Color(0.36, 0.58, 0.2, 1))
+		_stamp(parent, "island.png", isle["pos"], float(isle["h"]))
+	_scatter_rocks(parent, pond_s, Vector2(44.0, 26.0))
+	for bank in [Vector2(23.4, 21.5), Vector2(27.2, 27.5), Vector2(64.6, 21.5), Vector2(60.8, 27.5)]:
+		_stamp(parent, "rock.png", bank, 0.72)
 
 	var bridges: Array = []
 	var deck := 7.6
@@ -72,20 +65,12 @@ static func populate(match_node: Node2D, decorate: bool = true) -> void:
 	]
 	for rect_item in bridge_specs:
 		var rect: Rect2 = rect_item
-		var poly := rect_poly(rect)
-		_drop(parent, poly, Vector2(0.08, 0.14))
-		_poly(parent, poly, Color(0.62, 0.42, 0.22, 1))
-		for plank in 4:
-			var y: float = rect.position.y + rect.size.y * (float(plank) + 0.5) / 4.0
-			_poly(parent, rect_poly(Rect2(rect.position.x + 0.08, y, rect.size.x - 0.16, 0.05)), Color(0.5, 0.34, 0.16, 0.9))
-		_poly(parent, rect_poly(Rect2(rect.position.x, rect.position.y, 0.08, rect.size.y)), Color(0.42, 0.28, 0.14))
-		_poly(parent, rect_poly(Rect2(rect.position.x + rect.size.x - 0.08, rect.position.y, 0.08, rect.size.y)), Color(0.42, 0.28, 0.14))
 		_stamp(parent, "bridge.png", rect.get_center(), 2.45)
 		bridges.append(rect)
 
 	_floors(parent)
 	var walls: Array = _walls(parent)
-	var trees: Array = _trees(parent)
+	var trees: Array = []
 	var rocks: Array = _rocks(parent)
 	var keeps: Array = _keeps(parent)
 	var towers: Array = _south_towers(parent)
@@ -277,8 +262,7 @@ static func _walls(parent: Node2D) -> Array:
 	return walls
 
 
-static func _trees(parent: Node2D) -> Array:
-	var trees: Array = []
+static func _grove_spots() -> Array:
 	var spots: Array = [
 		[28, 12], [46, 11], [62, 13], [108, 12], [126, 11], [148, 13], [164, 16],
 		[70, 16.2], [70, 27.6], [106, 16.2], [106, 27.6],
@@ -286,27 +270,55 @@ static func _trees(parent: Node2D) -> Array:
 		[72, 80.2], [72, 91.4], [104, 80.2],
 		[30, 96], [102, 96], [150, 96], [172, 40], [172, 70]
 	]
+	var west := Rect2(4.2, 14.0, 17.0, 23.5)
+	var east := Rect2(66.8, 14.0, 17.2, 23.5)
+	var out: Array = []
 	for spot in spots:
 		var pos := Vector2(float(spot[0]), float(spot[1])) * 0.5
-		var radius := 1.55 * 0.5
-		var body := StaticBody2D.new()
-		body.position = pos
-		body.collision_layer = Balance.LAYER_WALL
-		body.collision_mask = 0
-		var shape := CircleShape2D.new()
-		shape.radius = radius
-		var col := CollisionShape2D.new()
-		col.shape = shape
-		body.add_child(col)
-		parent.add_child(body)
-		_drop(parent, circle_poly(pos, radius, 10), Vector2(0.1, 0.14))
-		_poly(parent, circle_poly(pos + Vector2(0.04, 0.08), radius, 12), Color(0.05, 0.18, 0.08, 1))
-		_poly(parent, circle_poly(pos + Vector2(-0.04, -0.05), radius * 0.82, 10), Color(0.14, 0.46, 0.18, 1))
-		_poly(parent, circle_poly(pos + Vector2(-0.12, -0.12), radius * 0.38, 8), Color(0.62, 0.86, 0.34, 1))
-		_poly(parent, circle_poly(pos + Vector2(0.02, 0.1), radius * 0.16, 6), Color(0.28, 0.16, 0.08, 1))
-		_stamp(parent, "tree.png", pos + Vector2(0, -0.45), 2.35)
-		trees.append({"pos": pos, "r": radius})
-	return trees
+		if west.has_point(pos) or east.has_point(pos):
+			continue
+		if _in_mountain(pos):
+			continue
+		out.append(pos)
+	return out
+
+
+static func _in_mountain(pos: Vector2) -> bool:
+	if pos.y > 5.2 and pos.y < 45.2:
+		return false
+	if pos.x > 39.2 and pos.x < 48.8:
+		return false
+	for xf in [6.0, 16.0, 26.0, 34.0, 54.0, 64.0, 74.0, 84.0]:
+		if absf(pos.x - float(xf)) <= 5.2:
+			return true
+	return false
+
+
+static func _scatter_rocks(parent: Node2D, poly: PackedVector2Array, center: Vector2) -> void:
+	var count := poly.size()
+	if count == 0:
+		return
+	var step := maxi(1, int(count / 12))
+	var bridges := [
+		Rect2(41.4, 10.2, 5.2, 3.0),
+		Rect2(41.4, 37.4, 5.2, 3.0)
+	]
+	var i := 0
+	while i < count:
+		var p: Vector2 = poly[i]
+		var away := p - center
+		if away.length_squared() > 0.01:
+			var at := p + away.normalized() * 0.4
+			var on_bridge := false
+			for rect in bridges:
+				if (rect as Rect2).has_point(at):
+					on_bridge = true
+					break
+			if not on_bridge:
+				var rock := _stamp(parent, "rock.png", at, 0.85)
+				if rock != null and i % 2 == 0:
+					rock.flip_h = true
+		i += step
 
 
 static func _rocks(parent: Node2D) -> Array:
@@ -769,14 +781,18 @@ static func _mountains(parent: Node2D) -> void:
 
 
 static func _wild(parent: Node2D) -> Array:
-	var spots: Array = [
+	var spots: Array = []
+	for grove in _grove_spots():
+		var at: Vector2 = grove
+		spots.append(["tree", at.x, at.y])
+	spots.append_array([
 		["tree", 18.0, 8.0], ["tree", 70.0, 8.0], ["tree", 18.0, 42.0], ["tree", 70.0, 42.0],
 		["tree", 34.0, 8.0], ["tree", 54.0, 8.0], ["tree", 34.0, 42.0], ["tree", 54.0, 42.0],
 		["plant", 20.0, 10.0], ["plant", 68.0, 10.0], ["plant", 20.0, 40.0], ["plant", 68.0, 40.0],
 		["plant", 36.0, 12.0], ["plant", 52.0, 38.0],
 		["animal", 16.0, 10.0], ["animal", 72.0, 10.0], ["animal", 16.0, 40.0], ["animal", 72.0, 40.0],
 		["animal", 32.0, 36.0], ["animal", 56.0, 14.0],
-	]
+	])
 	var out: Array = []
 	for spot in spots:
 		var kind := str(spot[0])

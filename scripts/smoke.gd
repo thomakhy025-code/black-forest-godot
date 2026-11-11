@@ -64,7 +64,23 @@ func _ready() -> void:
 		if str(n.get("kind", "")) == "animal":
 			animals += 1
 	_check("6 animals", animals == 6)
-	_check("wild nodes", match_node.nodes.size() == 20)
+	var node_count: int = match_node.nodes.size()
+	_check("wild nodes %d" % node_count, node_count == 35)
+	var castle_trees := 0
+	var west_yard := Rect2(4.2, 14.0, 17.0, 23.5)
+	var east_yard := Rect2(66.8, 14.0, 17.2, 23.5)
+	for node in match_node.nodes:
+		if str(node.get("kind", "")) != "tree":
+			continue
+		var tree_at: Vector2 = node["pos"]
+		if west_yard.has_point(tree_at) or east_yard.has_point(tree_at):
+			castle_trees += 1
+	_check("no castle trees", castle_trees == 0)
+	var nia = null
+	for unit in match_node.units:
+		if str(unit.unit_id) == "nia":
+			nia = unit
+	_check("bot leaves the yard", nia != null and match_node.steer_point(nia, Vector2(18, 8)).x > 21.0)
 	_check("dash 4m", absf(Balance.DASH_DIST - 4.0) < 0.001)
 	_check("river water", match_node.in_water(Vector2(25, 25.5)))
 	_check("pond water", match_node.in_water(Vector2(44, 18)))
@@ -187,7 +203,7 @@ func _ready() -> void:
 	var blob: Dictionary = match_node._decode_net_bytes(raw)
 	var supply: Dictionary = blob.get("supply", {})
 	_check("supply forges", supply.get("forges", []).size() == 4)
-	_check("supply nodes", supply.get("nodes", []).size() == 20)
+	_check("supply nodes", supply.get("nodes", []).size() == match_node.nodes.size())
 	player.equip_weapon("none", false)
 	player.cds["fireball"] = 0.0
 	player.global_position = player_pos

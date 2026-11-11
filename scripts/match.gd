@@ -469,10 +469,17 @@ func _segment_hits_keep(a: Vector2, b: Vector2, team: int) -> bool:
 
 
 func steer_point(u, goal: Vector2) -> Vector2:
+	# A resource just outside the keep is closer to an inside path node than to
+	# the gate. Walking that line hits the wall, so the bot slides and shakes
+	# in the courtyard. Leave through the gate first.
+	if _inside_yard(u.global_position, u.team) and not _inside_yard(goal, u.team):
+		var gate := _yard_exit(u.team)
+		if u.global_position.distance_to(gate) > 0.85:
+			return gate
 	if los(u.global_position, goal, u.team):
 		return goal
 	var start := Balance.closest_node(u.global_position)
-	var goal_id := Balance.closest_node(goal)
+	var goal_id := _node_seeing(goal, u.team)
 	var cached: Dictionary = _steer.get(u.unit_id, {})
 	var path: Array = cached.get("path", [])
 	if str(cached.get("from", "")) != start or str(cached.get("to", "")) != goal_id:
@@ -490,6 +497,31 @@ func steer_point(u, goal: Vector2) -> Vector2:
 		if u.global_position.distance_to(n2) >= 2.4:
 			return n2
 	return goal
+
+
+func _inside_yard(pos: Vector2, team: int) -> bool:
+	var yard := Rect2(4.2, 14.0, 17.0, 23.5) if team == 0 else Rect2(66.8, 14.0, 17.2, 23.5)
+	return yard.has_point(pos)
+
+
+func _yard_exit(team: int) -> Vector2:
+	return Vector2(22.8, 25.5) if team == 0 else Vector2(65.2, 25.5)
+
+
+func _node_seeing(goal: Vector2, team: int) -> String:
+	var best := ""
+	var bd := 1.0e12
+	for id in Balance.NODES.keys():
+		var at: Vector2 = Balance.NODES[id]
+		if not los(at, goal, team):
+			continue
+		var dist := at.distance_squared_to(goal)
+		if dist < bd:
+			bd = dist
+			best = str(id)
+	if best == "":
+		return Balance.closest_node(goal)
+	return best
 
 
 func nearest_enemy(u, rad: float):
