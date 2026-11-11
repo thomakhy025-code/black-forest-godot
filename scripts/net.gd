@@ -329,6 +329,10 @@ func note_weapon() -> void:
 	pending_buttons |= BIT_WEAPON
 
 
+func note_drop() -> void:
+	pending_buttons |= BIT_WEAPON
+
+
 func note_guard() -> void:
 	pending_buttons |= BIT_GUARD
 
@@ -885,11 +889,8 @@ func _predict_local() -> void:
 		while history.size() > 64:
 			history.pop_front()
 	if buttons & BIT_ATTACK and player.carrying == null and not player.root_locked() and not player.dead:
-		if str(player.weapon) == "sword" or str(player.weapon) == "wand":
-			player.swing_vis = 0.26
-			player.apply_swing_fields(player.swing_shape())
-		else:
-			match_node.float_at(player.global_position + Vector2(0, -0.9), "NO WEAPON", Color.WHITE)
+		player.swing_vis = 0.26
+		player.apply_swing_fields(player.swing_shape())
 	elif buttons & BIT_ATTACK and player.carrying != null:
 		match_node.float_at(player.global_position + Vector2(0, -0.9), "CAN'T ATTACK", Color.WHITE)
 	if browser_link and not browser_host:

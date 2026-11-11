@@ -54,6 +54,17 @@ func _ready() -> void:
 	_check("max hp", absf(Balance.max_hp({"hp": 10}) - 125.0) < 0.001)
 	_check("sword range", absf(Balance.SWORD_RANGE - 0.5) < 0.001)
 	_check("4 forges", match_node.forges.size() == 4)
+	var open_doors := 0
+	for w in match_node.walls:
+		if w["kind"] == "door" and float(w["hp"]) <= 0.0 and bool(w["shape"].disabled):
+			open_doors += 1
+	_check("doors start open", open_doors == 4)
+	var animals := 0
+	for n in match_node.nodes:
+		if str(n.get("kind", "")) == "animal":
+			animals += 1
+	_check("6 animals", animals == 6)
+	_check("wild nodes", match_node.nodes.size() == 20)
 	_check("dash 4m", absf(Balance.DASH_DIST - 4.0) < 0.001)
 	_check("river water", match_node.in_water(Vector2(25, 25.5)))
 	_check("pond water", match_node.in_water(Vector2(44, 18)))
@@ -64,9 +75,9 @@ func _ready() -> void:
 	_check("player unarmed", player.weapon == "none" and not bool(player.skills.get("fireball", false)))
 	for u in match_node.units:
 		if str(u.unit_id) == "bram":
-			_check("bram wand", u.weapon == "wand" and bool(u.skills.get("fireball", false)) and bool(u.skills.get("mega", false)))
+			_check("bram unarmed", u.weapon == "none" and not bool(u.skills.get("fireball", false)))
 		elif str(u.unit_id) == "quinn":
-			_check("quinn sword", u.weapon == "sword" and bool(u.skills.get("ignite", false)) and not bool(u.skills.get("fireball", false)))
+			_check("quinn unarmed", u.weapon == "none" and not bool(u.skills.get("ignite", false)))
 	var base: float = player.move_speed()
 	player.carrying = State.new()
 	var half: float = player.move_speed()
@@ -78,6 +89,14 @@ func _ready() -> void:
 	player.guard = false
 	player.carrying = null
 	player.clear_guard()
+	player.wood = 3
+	player.hide = 3
+	player.fiber = 3
+	var loaded: float = player.move_speed()
+	_check("full bag moves", absf(loaded - base * Balance.BAG_FLOOR) < 0.05)
+	player.wood = 0
+	player.hide = 0
+	player.fiber = 0
 	var holt = null
 	for u in match_node.units:
 		if str(u.unit_id) == "holt":
@@ -88,6 +107,17 @@ func _ready() -> void:
 	var holt_hp: float = holt.hp
 	player.global_position = Vector2(30, 20)
 	player.facing = 0.0
+	player.equip_weapon("none", false)
+	holt.global_position = player.global_position + Vector2(0.55, 0.0)
+	var fist_before: float = holt.hp
+	match_node.resolve_swing(player)
+	_check("fist hit 5", holt.hp < fist_before - 4.5 and holt.hp > fist_before - 5.5)
+	holt.hp = holt.max_hp
+	player.wood = 2
+	player.equip_weapon("sword", false)
+	_check("bag still casts", player.try_cast("ignite"))
+	player.cast = null
+	player.wood = 0
 	player.equip_weapon("sword", false)
 	holt.global_position = player.global_position + Vector2(0.7, 0.0)
 	match_node.resolve_swing(player)
@@ -112,11 +142,52 @@ func _ready() -> void:
 	for forge in match_node.forges:
 		if int(forge["team"]) == 1 and str(forge["weapon"]) == "sword":
 			enemy_forge = forge
+	enemy_forge["built"] = true
+	player.wood = 2
+	player.hide = 1
+	player.fiber = 3
+	player.equip_weapon("none", false)
 	player.global_position = enemy_forge["pos"]
 	match_node.interact(player)
 	_check("stole enemy sword", player.weapon == "sword" and bool(player.skills.get("spark", false)))
+	_check("enemy pad keeps the bag", player.wood == 2 and player.hide == 1 and player.fiber == 3)
+	_check("enemy stock stays empty", int(enemy_forge["wood"]) == 0 and int(enemy_forge["hide"]) == 0 and int(enemy_forge["fiber"]) == 0)
 	match_node.interact(player)
 	_check("forge again", player.weapon == "sword")
+	enemy_forge["built"] = false
+	player.equip_weapon("none", false)
+	match_node.interact(player)
+	_check("unbuilt enemy stays shut", player.weapon == "none" and player.wood == 2 and int(enemy_forge["wood"]) == 0)
+	player.wood = 0
+	player.hide = 0
+	player.fiber = 0
+	var grove = null
+	for n in match_node.nodes:
+		if str(n.get("kind", "")) == "tree":
+			grove = n
+			break
+	player.global_position = grove["pos"] + Vector2(-0.8, 0.0)
+	player.facing = 0.0
+	for _chop in 3:
+		match_node.resolve_swing(player)
+	_check("tree drops wood", player.wood == 1 and float(grove["hp"]) <= 0.0)
+	match_node.drop_bag(player)
+	_check("drop bag", player.wood == 0 and match_node.piles.size() == 1)
+	player.equip_weapon("sword", false)
+	var fell_at: Vector2 = player.global_position
+	match_node.kill_unit(player, holt)
+	_check("death drops weapon", player.weapon == "none" and match_node.weapon_drops.size() == 1)
+	match_node.respawn_unit(player)
+	_check("respawn bare", not player.dead and player.weapon == "none")
+	player.global_position = fell_at
+	match_node.interact(player)
+	_check("pickup dropped sword", player.weapon == "sword" and match_node.weapon_drops.is_empty())
+	player.equip_weapon("none", false)
+	var raw: PackedByteArray = match_node.pack_net_bytes({})
+	var blob: Dictionary = match_node._decode_net_bytes(raw)
+	var supply: Dictionary = blob.get("supply", {})
+	_check("supply forges", supply.get("forges", []).size() == 4)
+	_check("supply nodes", supply.get("nodes", []).size() == 20)
 	player.equip_weapon("none", false)
 	player.cds["fireball"] = 0.0
 	player.global_position = player_pos

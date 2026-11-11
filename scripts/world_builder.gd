@@ -4,6 +4,7 @@ extends RefCounted
 
 const Balance = preload("res://scripts/balance.gd")
 const LabelScript = preload("res://scripts/world_label.gd")
+const MAP_ART := "res://assets/art/map/"
 
 ## Server rooms only need the collision bodies and the sim records. Canvas
 ## items are created for the local match and for each client, which is what
@@ -40,11 +41,15 @@ static func populate(match_node: Node2D, decorate: bool = true) -> void:
 
 	_grass(parent)
 	_bounds(parent)
+	_mountains(parent)
 	for poly in rivers:
 		_poly(parent, poly, Color(0.08, 0.28, 0.52, 0.96))
 		_poly(parent, inset_poly(poly, 0.72), Color(0.45, 0.82, 1.0, 0.4))
+	for spot in [Vector2(25.2, 22.5), Vector2(25.2, 29.0), Vector2(62.8, 22.5), Vector2(62.8, 29.0)]:
+		_stamp(parent, "river.png", spot, 2.5, PI * 0.5)
 	_poly(parent, pond_s, Color(0.07, 0.32, 0.58, 0.96))
 	_poly(parent, inset_poly(pond_s, 0.72), Color(0.55, 0.9, 1.0, 0.42))
+	_stamp(parent, "pond.png", Vector2(44.0, 26.0), 13.0)
 
 	var isles: Array = []
 	isles.append({"pos": Vector2(88.2, 50.4) * 0.5, "poly": isle_s, "r": 0.0})
@@ -75,6 +80,7 @@ static func populate(match_node: Node2D, decorate: bool = true) -> void:
 			_poly(parent, rect_poly(Rect2(rect.position.x + 0.08, y, rect.size.x - 0.16, 0.05)), Color(0.5, 0.34, 0.16, 0.9))
 		_poly(parent, rect_poly(Rect2(rect.position.x, rect.position.y, 0.08, rect.size.y)), Color(0.42, 0.28, 0.14))
 		_poly(parent, rect_poly(Rect2(rect.position.x + rect.size.x - 0.08, rect.position.y, 0.08, rect.size.y)), Color(0.42, 0.28, 0.14))
+		_stamp(parent, "bridge.png", rect.get_center(), 2.45)
 		bridges.append(rect)
 
 	_floors(parent)
@@ -139,6 +145,7 @@ static func populate(match_node: Node2D, decorate: bool = true) -> void:
 	match_node.bridges = bridges
 	match_node.isles = isles
 	match_node.water_polys = water
+	match_node.nodes = _wild(parent)
 
 
 static func _grass(parent: Node2D) -> void:
@@ -218,6 +225,7 @@ static func _walls(parent: Node2D) -> Array:
 		if spec["kind"] == "door":
 			layer = Balance.LAYER_DOOR_CRIMSON if int(spec["team"]) == 0 else Balance.LAYER_DOOR_AZURE
 			color = Color(0.78, 0.22, 0.28) if int(spec["team"]) == 0 else Color(0.22, 0.42, 0.82)
+		var is_door := str(spec["kind"]) == "door"
 		var body := StaticBody2D.new()
 		body.collision_layer = layer
 		body.collision_mask = 0
@@ -228,30 +236,42 @@ static func _walls(parent: Node2D) -> Array:
 		col.position = rect.position + rect.size * 0.5
 		body.add_child(col)
 		parent.add_child(body)
+		var holder: Node2D = parent
+		var door_root: Node2D = null
+		if is_door and _decorate:
+			door_root = Node2D.new()
+			parent.add_child(door_root)
+			holder = door_root
+			door_root.visible = false
 		var visual: Polygon2D = null
 		if _decorate:
-			_drop(parent, rect_poly(rect), Vector2(0.08, 0.12))
+			_drop(holder, rect_poly(rect), Vector2(0.08, 0.12))
 			visual = Polygon2D.new()
 			visual.polygon = rect_poly(rect)
 			visual.color = color
-			parent.add_child(visual)
-			if spec["kind"] == "door":
+			holder.add_child(visual)
+			if is_door:
 				var inset := Rect2(rect.position.x + rect.size.x * 0.22, rect.position.y + 0.04, rect.size.x * 0.56, rect.size.y * 0.22)
-				_poly(parent, rect_poly(inset), Color(1, 1, 1, 0.28))
+				_poly(holder, rect_poly(inset), Color(1, 1, 1, 0.28))
 			else:
 				var foot := Rect2(rect.position.x, rect.position.y + rect.size.y * 0.62, rect.size.x, rect.size.y * 0.38)
-				_poly(parent, rect_poly(foot), Color(0.28, 0.2, 0.12, 0.9))
+				_poly(holder, rect_poly(foot), Color(0.28, 0.2, 0.12, 0.9))
 				var lip := Rect2(rect.position.x, rect.position.y, rect.size.x, minf(0.1, rect.size.y * 0.18))
-				_poly(parent, rect_poly(lip), Color(1.0, 0.96, 0.86, 0.75))
-				_merlons(parent, rect)
+				_poly(holder, rect_poly(lip), Color(1.0, 0.96, 0.86, 0.75))
+				_merlons(holder, rect)
+		if is_door:
+			col.disabled = true
+		var shown = door_root if door_root != null else visual
 		walls.append({
 			"kind": spec["kind"],
 			"team": int(spec["team"]),
 			"rect": rect,
-			"hp": float(spec.get("hp", 1)),
-			"max": float(spec.get("max", 1)),
+			"hp": 0.0 if is_door else float(spec.get("hp", 1)),
+			"max": float(spec.get("max", 70.0 if is_door else 1.0)),
+			"wood": 0,
+			"fiber": 0,
 			"shape": col,
-			"visual": visual,
+			"visual": shown,
 			"body": body
 		})
 	return walls
@@ -284,6 +304,7 @@ static func _trees(parent: Node2D) -> Array:
 		_poly(parent, circle_poly(pos + Vector2(-0.04, -0.05), radius * 0.82, 10), Color(0.14, 0.46, 0.18, 1))
 		_poly(parent, circle_poly(pos + Vector2(-0.12, -0.12), radius * 0.38, 8), Color(0.62, 0.86, 0.34, 1))
 		_poly(parent, circle_poly(pos + Vector2(0.02, 0.1), radius * 0.16, 6), Color(0.28, 0.16, 0.08, 1))
+		_stamp(parent, "tree.png", pos + Vector2(0, -0.45), 2.35)
 		trees.append({"pos": pos, "r": radius})
 	return trees
 
@@ -457,11 +478,20 @@ static func _forges(parent: Node2D) -> Array:
 	for spec in specs:
 		var pos: Vector2 = spec["pos"]
 		var sword: bool = str(spec["weapon"]) == "sword"
-		var color := Color(1.0, 0.55, 0.16, 0.95) if sword else Color(0.45, 0.75, 1.0, 0.95)
-		_poly(parent, rect_poly(Rect2(pos.x - 0.45, pos.y - 0.28, 0.9, 0.56)), color)
+		var color := Color(0.72, 0.4, 0.16, 0.95) if sword else Color(0.28, 0.48, 0.72, 0.95)
+		var pad := _poly(parent, rect_poly(Rect2(pos.x - 0.45, pos.y - 0.28, 0.9, 0.56)), color)
 		_ring(parent, pos, 0.55, color)
-		_label(parent, pos + Vector2(0, -0.95), "SWORD FORGE" if sword else "WAND FORGE", Color(0.15, 0.08, 0.05))
-		out.append({"weapon": spec["weapon"], "team": int(spec["team"]), "pos": pos})
+		_label(parent, pos + Vector2(0, -0.95), "SWORD" if sword else "WAND", Color(0.15, 0.08, 0.05))
+		out.append({
+			"weapon": spec["weapon"],
+			"team": int(spec["team"]),
+			"pos": pos,
+			"built": false,
+			"wood": 0,
+			"hide": 0,
+			"fiber": 0,
+			"visual": pad,
+		})
 	return out
 
 
@@ -686,6 +716,108 @@ static func _ring(parent: Node, pos: Vector2, radius: float, color: Color) -> vo
 		pts.append(pos + Vector2(cos(a), sin(a)) * radius)
 	line.points = pts
 	parent.add_child(line)
+
+
+static func _stamp(parent: Node, file: String, pos: Vector2, height: float, rot: float = 0.0) -> Sprite2D:
+	if not _decorate:
+		return null
+	var path := MAP_ART + file
+	if not ResourceLoader.exists(path):
+		return null
+	var tex := load(path) as Texture2D
+	if tex == null or tex.get_height() <= 0:
+		return null
+	var spr := Sprite2D.new()
+	spr.texture = tex
+	spr.centered = true
+	spr.position = pos
+	spr.rotation = rot
+	var fitted := height / float(tex.get_height())
+	spr.scale = Vector2(fitted, fitted)
+	spr.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	parent.add_child(spr)
+	return spr
+
+
+static func _block(parent: Node, rect: Rect2) -> void:
+	var body := StaticBody2D.new()
+	body.collision_layer = Balance.LAYER_WALL
+	body.collision_mask = 0
+	var shape := RectangleShape2D.new()
+	shape.size = rect.size
+	var col := CollisionShape2D.new()
+	col.shape = shape
+	col.position = rect.position + rect.size * 0.5
+	body.add_child(col)
+	parent.add_child(body)
+
+
+static func _mountains(parent: Node2D) -> void:
+	var xs: Array = [6.0, 16.0, 26.0, 34.0, 54.0, 64.0, 74.0, 84.0]
+	var i := 0
+	for x in xs:
+		var xf := float(x)
+		_block(parent, Rect2(xf - 5.2, 1.4, 10.4, 3.8))
+		var north := _stamp(parent, "mountain.png", Vector2(xf, 2.8), 6.0)
+		if north != null and i % 2 == 1:
+			north.flip_h = true
+		_block(parent, Rect2(xf - 5.2, 45.2, 10.4, 3.6))
+		var south := _stamp(parent, "mountain.png", Vector2(xf, 47.4), 5.2)
+		if south != null and i % 2 == 0:
+			south.flip_h = true
+		i += 1
+
+
+static func _wild(parent: Node2D) -> Array:
+	var spots: Array = [
+		["tree", 18.0, 8.0], ["tree", 70.0, 8.0], ["tree", 18.0, 42.0], ["tree", 70.0, 42.0],
+		["tree", 34.0, 8.0], ["tree", 54.0, 8.0], ["tree", 34.0, 42.0], ["tree", 54.0, 42.0],
+		["plant", 20.0, 10.0], ["plant", 68.0, 10.0], ["plant", 20.0, 40.0], ["plant", 68.0, 40.0],
+		["plant", 36.0, 12.0], ["plant", 52.0, 38.0],
+		["animal", 16.0, 10.0], ["animal", 72.0, 10.0], ["animal", 16.0, 40.0], ["animal", 72.0, 40.0],
+		["animal", 32.0, 36.0], ["animal", 56.0, 14.0],
+	]
+	var out: Array = []
+	for spot in spots:
+		var kind := str(spot[0])
+		var pos := Vector2(float(spot[1]), float(spot[2]))
+		var hp := Balance.TREE_HP
+		var regrow := Balance.TREE_REGROW
+		var item := "wood"
+		var file := "tree.png"
+		var height := 2.35
+		var radius := 0.55
+		var lift := -0.45
+		if kind == "plant":
+			hp = Balance.PLANT_HP
+			regrow = Balance.PLANT_REGROW
+			item = "fiber"
+			file = "plant.png"
+			height = 0.75
+			radius = 0.32
+			lift = -0.1
+		elif kind == "animal":
+			hp = Balance.ANIMAL_HP
+			regrow = Balance.ANIMAL_REGROW
+			item = "hide"
+			file = "animal.png"
+			height = 0.9
+			radius = 0.4
+			lift = 0.0
+		out.append({
+			"kind": kind,
+			"item": item,
+			"pos": pos,
+			"home": pos,
+			"hp": hp,
+			"max": hp,
+			"down": 0.0,
+			"phase": randf() * TAU,
+			"regrow": regrow,
+			"r": radius,
+			"visual": _stamp(parent, file, pos + Vector2(0, lift), height),
+		})
+	return out
 
 
 static func _label(parent: Node, pos: Vector2, text: String, color: Color) -> void:

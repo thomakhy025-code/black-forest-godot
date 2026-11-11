@@ -2,6 +2,7 @@ extends CanvasLayer
 ## Match HUD: vitals, the three equipped skills, throw, defense, kill banner.
 
 const Balance = preload("res://scripts/balance.gd")
+const Supply = preload("res://scripts/supply.gd")
 
 var sim: Node = null
 var hp_bar: ProgressBar
@@ -20,6 +21,7 @@ var skill_row: HBoxContainer
 var actions: HBoxContainer
 var attack_btn: Button
 var throw_btn: Button
+var drop_btn: Button
 var guard_btn: Button
 var touch: Control
 var bottom_bar: Control
@@ -84,6 +86,8 @@ func _wire_touch() -> void:
 		touch.connect("skill_pressed", _cast)
 	if touch.has_signal("interact_pressed") and not touch.is_connected("interact_pressed", _interact):
 		touch.connect("interact_pressed", _interact)
+	if touch.has_signal("drop_pressed") and not touch.is_connected("drop_pressed", _drop):
+		touch.connect("drop_pressed", _drop)
 
 
 func bind_match(match_node: Node) -> void:
@@ -142,8 +146,11 @@ func _process(_delta: float) -> void:
 	var next_buff := _buffs(player)
 	if buff_label.text != next_buff:
 		buff_label.text = next_buff
+	var bag_line := "Wood %d   Hide %d   Fiber %d" % [player.wood, player.hide, player.fiber]
 	if player.carrying != null:
-		carry_label.text = "Carrying — half speed, no attacks. Throw or F. Defense halves damage for 5 MP/s."
+		carry_label.text = "Diamond — half speed, no attacks. F throws.  " + bag_line
+	elif player.bag_total() > 0:
+		carry_label.text = bag_line + "  — slower. F drops the bag."
 	else:
 		carry_label.text = ""
 	var touch_on := touch != null and touch.visible
@@ -152,10 +159,14 @@ func _process(_delta: float) -> void:
 		touch.call("set_carrying", player.carrying != null)
 		touch.call("set_guard_on", player.guard)
 		touch.call("set_cooldowns", player)
+		if touch.has_method("set_bag"):
+			touch.call("set_bag", player.bag_total() > 0)
 	else:
 		throw_btn.visible = player.carrying != null
 		guard_btn.visible = player.carrying != null
 		guard_btn.text = "Defense ON" if player.guard else "Defense"
+		if drop_btn:
+			drop_btn.visible = player.bag_total() > 0
 	if sim.kill_call == null:
 		kill_label.visible = false
 	else:
@@ -264,7 +275,7 @@ func note_weapon() -> void:
 
 
 func _weapon_line(player) -> String:
-	var held := "Unarmed"
+	var held := "Bare hands"
 	if str(player.weapon) == "sword":
 		held = "Fiery Sword"
 	elif str(player.weapon) == "wand":
@@ -272,11 +283,27 @@ func _weapon_line(player) -> String:
 	if sim != null and sim.has_method("nearest_forge"):
 		var forge: Dictionary = sim.nearest_forge(player)
 		if not forge.is_empty():
-			var name := "Sword Forge" if str(forge.get("weapon", "")) == "sword" else "Wand Forge"
-			if int(forge.get("team", player.team)) != int(player.team):
-				name = "Enemy " + name
-			return "E  " + name
+			return "E  " + _machine_line(player, forge)
 	return held
+
+
+func _machine_line(player, forge: Dictionary) -> String:
+	var kind := str(forge.get("weapon", "sword"))
+	var title := "Sword" if kind == "sword" else "Wand"
+	var enemy := int(forge.get("team", player.team)) != int(player.team)
+	if bool(forge.get("built", false)):
+		return ("Enemy " + title) if enemy else (title + " ready")
+	if enemy:
+		return "Enemy " + title
+	var need := Supply.recipe(kind)
+	var bits := PackedStringArray()
+	for key in ["wood", "hide", "fiber"]:
+		var left := int(need.get(key, 0)) - int(forge.get(key, 0))
+		if left > 0:
+			bits.append("%d %s" % [left, key])
+	if bits.is_empty():
+		return title
+	return title + "  " + " ".join(bits)
 
 
 func _rebuild_skills() -> void:
@@ -341,6 +368,15 @@ func _throw() -> void:
 		return
 	if sim and sim.phase == "play" and not sim.paused:
 		sim.throw_diamond(sim.player)
+
+
+func _drop() -> void:
+	if sim == null or sim.phase != "play" or sim.paused or sim.player == null:
+		return
+	if sim.net_role == "client":
+		Net.note_drop()
+		return
+	sim.drop_bag(sim.player)
 
 
 func _guard() -> void:
@@ -482,6 +518,12 @@ func _build() -> void:
 	throw_btn.custom_minimum_size = Vector2(88, 44)
 	throw_btn.visible = false
 	throw_btn.pressed.connect(_throw)
+	drop_btn = Button.new()
+	drop_btn.text = "Drop"
+	drop_btn.focus_mode = Control.FOCUS_NONE
+	drop_btn.custom_minimum_size = Vector2(88, 44)
+	drop_btn.visible = false
+	drop_btn.pressed.connect(_drop)
 	guard_btn = Button.new()
 	guard_btn.text = "Defense"
 	guard_btn.focus_mode = Control.FOCUS_NONE
@@ -490,6 +532,7 @@ func _build() -> void:
 	guard_btn.pressed.connect(_guard)
 	actions.add_child(attack_btn)
 	actions.add_child(throw_btn)
+	actions.add_child(drop_btn)
 	actions.add_child(guard_btn)
 
 	kill_label = _label("", 40)
@@ -615,10 +658,12 @@ func _help_copy() -> String:
 	return """[b]You are Crimson.[/b] Steal the Azure diamond and hold it in your vault for [b]10 seconds[/b]. If a carrier dies, the diamond stays where they fell. Only Crimson can return the Crimson diamond: carry it into your vault and it snaps home at once. Azure wins the same way with yours.
 
 [b]WASD[/b] move. Right-click walks. On the web build and on a touch screen, drag the stick in from the lower-left corner. Keys win while they are held. Attacks follow the direction you are facing. [b]J[/b], left-click, or the large Attack button. The three weapon skills sit in an arc above Attack. Throw and Defense appear beside those skills only while you carry a diamond.
-You spawn unarmed. Each keep has a Sword Forge and a Wand Forge. [b]E[/b], or Use on a touch screen, equips that weapon at once. Enemy forges work the same way, so you can steal a weapon by walking into the other castle. Swapping does not refresh cooldowns, and death keeps the weapon you were holding.
+You spawn bare-handed. A punch does [b]5[/b] damage. Chop grove trees for wood, plants for fiber, and the small animals for hide. You can hold 3 of each. Every item you carry takes 7 percent off your speed, down to 45 percent. Skills, swings, hops, and dashes still work. [b]F[/b] drops the bag when you are not holding a diamond. Drop does it even if you are. Teammates and enemies can take a pile.
+Each keep has a sword machine and a wand machine. They start unbuilt. [b]E[/b] at your own machine stores whatever it still needs. A sword takes 4 wood and 2 hide. A wand takes 1 wood, 2 hide, and 3 fiber. The delivery that finishes it also arms you. After that, anyone can take that weapon for free, even an enemy who has not built their own. An enemy cannot spend resources on your machine. Gates start open. Build one with 3 wood and 1 fiber. Repair a damaged gate with 1 wood, then the repair channel.
+On death the bag falls where you fell, and a held weapon lies there for 3 seconds. You respawn bare-handed. Swapping weapons does not refresh cooldowns.
 [b]1[/b] [b]2[/b] [b]3[/b] cast the weapon's three skills. The fiery sword is Ignition Swipe, Horizontal Spark Slash, and Ember Burn. Its basic attack is 15 damage, once a second, in a 120 degree arc. The wand is Fireball, Ice Shadowing, and Mega Explosion. Its basic attack is 10 damage, once a second, in a 3 m by 2 m line ahead of you.
 Mega channels 2.5s. You cannot move, attack, or use other skills. Blast 7 m ahead, radius 5 m, [b]200[/b] damage, teammates included, 70 MP.
-While you carry a diamond you cannot swing or cast, and you move at half speed. [b]G[/b] or Defense halves incoming damage for 5 MP each second. [b]F[/b], right-click, or Throw sends it 1 m along your facing.
+While you carry a diamond you cannot swing or cast, and you move at half speed on top of the bag slowdown. [b]G[/b] or Defense halves incoming damage for 5 MP each second. [b]F[/b], right-click, or Throw sends it 1 m along your facing.
 [b]E[/b] also uses a catapult, ladder, spring, sewer, or tower, and repairs your gate. [b]Space[/b] hops.
 Rivers and the pond slow you to half speed. Bridges and islands do not. Four bridge towers, 1 m radius, capture in 3 seconds at the door. 200 HP, then down for 20 seconds.
 [b]H[/b] opens this. Esc or Enter closes it."""

@@ -9,6 +9,7 @@ signal attack_pressed
 signal throw_pressed
 signal guard_pressed
 signal interact_pressed
+signal drop_pressed
 signal skill_pressed(id: String)
 
 var wish := Vector2.ZERO
@@ -22,6 +23,7 @@ var attack_btn: Button
 var throw_btn: Button
 var guard_btn: Button
 var use_btn: Button
+var drop_btn: Button
 var slot_buttons := {}
 var _dragging := false
 var _drag_id := -1
@@ -106,6 +108,12 @@ func _grab_nodes() -> void:
 		use_btn.name = "Use"
 		use_btn.text = "Use"
 		_cluster.add_child(use_btn)
+	drop_btn = _cluster.get_node_or_null("Drop")
+	if drop_btn == null:
+		drop_btn = Button.new()
+		drop_btn.name = "Drop"
+		drop_btn.text = "Drop"
+		_cluster.add_child(drop_btn)
 	_stick.mouse_filter = Control.MOUSE_FILTER_STOP
 	_knob.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_ring.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -122,14 +130,19 @@ func _grab_nodes() -> void:
 		guard_btn.pressed.connect(_emit_guard)
 	if not use_btn.pressed.is_connected(_emit_interact):
 		use_btn.pressed.connect(_emit_interact)
+	if not drop_btn.pressed.is_connected(_emit_drop):
+		drop_btn.pressed.connect(_emit_drop)
 	attack_btn.focus_mode = Control.FOCUS_NONE
 	throw_btn.focus_mode = Control.FOCUS_NONE
 	guard_btn.focus_mode = Control.FOCUS_NONE
 	use_btn.focus_mode = Control.FOCUS_NONE
+	drop_btn.focus_mode = Control.FOCUS_NONE
 	attack_btn.text = "ATK"
 	use_btn.text = "Use"
+	drop_btn.text = "Drop"
 	throw_btn.visible = false
 	guard_btn.visible = false
+	drop_btn.visible = false
 	var parent_node := get_parent()
 	if parent_node:
 		parent_node.move_child.call_deferred(self, parent_node.get_child_count() - 1)
@@ -156,10 +169,12 @@ func _style_base() -> void:
 	_paint_button(throw_btn, Color.html("#7ad7ff"), 13)
 	_paint_button(guard_btn, Color.html("#9fd7ff"), 11)
 	_paint_button(use_btn, Color.html("#e7d3a1"), 13)
+	_paint_button(drop_btn, Color.html("#d7e38a"), 13)
 	attack_btn.add_theme_color_override("font_color", Color.html("#1b1428"))
 	throw_btn.add_theme_color_override("font_color", Color.html("#1b1428"))
 	guard_btn.add_theme_color_override("font_color", Color.html("#1b1428"))
 	use_btn.add_theme_color_override("font_color", Color.html("#1b1428"))
+	drop_btn.add_theme_color_override("font_color", Color.html("#1b1428"))
 
 
 func set_skills(ids: Array) -> void:
@@ -193,6 +208,11 @@ func set_carrying(on: bool) -> void:
 		guard_btn.visible = on
 
 
+func set_bag(on: bool) -> void:
+	if drop_btn:
+		drop_btn.visible = on
+
+
 func set_guard_on(on: bool) -> void:
 	if guard_btn == null:
 		return
@@ -224,6 +244,10 @@ func _emit_guard() -> void:
 
 func _emit_interact() -> void:
 	interact_pressed.emit()
+
+
+func _emit_drop() -> void:
+	drop_pressed.emit()
 
 
 func _emit_skill(id: String) -> void:
@@ -268,8 +292,10 @@ func _layout() -> void:
 	_place_round(use_btn, cw - aw - uw - 10.0, ch - ch * 0.12 - uw, uw)
 	var tw := 72.0 if narrow else 80.0
 	var guard_right := 84.0 if narrow else 96.0
+	var dw := 64.0 if narrow else 70.0
 	_place_round(throw_btn, cw - tw, -14.0 - tw, tw)
 	_place_round(guard_btn, cw - guard_right - tw, -14.0 - tw, tw)
+	_place_round(drop_btn, cw - aw - uw - dw - 18.0, ch - ch * 0.12 - dw, dw)
 	var sw := 64.0 if narrow else 70.0
 	for id in slot_buttons.keys():
 		var btn: Button = slot_buttons[id]

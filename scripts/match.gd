@@ -4,6 +4,7 @@ extends Node2D
 
 const Balance = preload("res://scripts/balance.gd")
 const WorldBuilder = preload("res://scripts/world_builder.gd")
+const Supply = preload("res://scripts/supply.gd")
 const State = preload("res://scripts/state.gd")
 const DiamondView = preload("res://scripts/diamond_view.gd")
 const UnitScene = preload("res://scenes/unit.tscn")
@@ -39,6 +40,9 @@ var diamond_homes: Array = []
 var bridges: Array = []
 var isles: Array = []
 var water_polys: Array = []
+var nodes: Array = []
+var piles: Array = []
+var weapon_drops: Array = []
 var fires: Array = []
 var shots: Array = []
 var floats: Array = []
@@ -129,6 +133,9 @@ func start_match(data: Dictionary, record_results: bool = true, show_help: bool 
 		child.free()
 	units.clear()
 	diamonds.clear()
+	piles.clear()
+	weapon_drops.clear()
+	nodes.clear()
 	WorldBuilder.populate(self)
 	_water_dirty = true
 	_spawn_diamonds()
@@ -223,7 +230,10 @@ func _poll_actions() -> void:
 		else:
 			player.try_swing()
 	if Input.is_action_just_pressed("throw"):
-		throw_diamond(player)
+		if player.carrying != null:
+			throw_diamond(player)
+		elif player.bag_total() > 0:
+			drop_bag(player)
 	if Input.is_action_just_pressed("interact"):
 		interact(player)
 	if Input.is_action_just_pressed("hop"):
@@ -278,6 +288,7 @@ func tick(dt: float) -> void:
 		if float(fx.t) > 0.0:
 			next_mega.append(fx)
 	mega_fx = next_mega
+	Supply.tick(self, dt)
 	if headless_server:
 		return
 	_tick_fx(dt)
@@ -300,15 +311,15 @@ func _spawn_units(data: Dictionary) -> void:
 	var zero := Balance.blank_stats()
 	var roster: Array = [
 		{"id": "you", "name": pname, "team": 0, "gender": gender, "role": "player", "pos": Vector2(24, 50) * 0.5, "facing": 0.0, "stats": stats, "weapon": "none", "is_player": true, "invuln": 1.8},
-		_bot("nia", "Nia", 0, "female", "defend", Vector2(16, 48) * 0.5, "sword", zero),
-		_bot("joss", "Joss", 0, "male", "escort", Vector2(26, 58) * 0.5, "sword", zero),
-		_bot("pico", "Pico", 0, "male", "raid", Vector2(32, 50) * 0.5, "sword", zero),
-		_bot("bram", "Bram", 0, "male", "fight", Vector2(22, 42) * 0.5, "wand", zero),
-		_bot("holt", "Holt", 1, "male", "defend", Vector2(160, 48) * 0.5, "sword", zero),
-		_bot("sable", "Sable", 1, "female", "escort", Vector2(150, 58) * 0.5, "sword", zero),
-		_bot("vex", "Vex", 1, "female", "raid", Vector2(144, 52) * 0.5, "sword", zero),
-		_bot("mira", "Mira", 1, "female", "fight", Vector2(156, 56) * 0.5, "wand", zero),
-		_bot("quinn", "Quinn", 1, "male", "fight", Vector2(148, 46) * 0.5, "sword", zero),
+		_bot("nia", "Nia", 0, "female", "defend", Vector2(16, 48) * 0.5, "none", zero),
+		_bot("joss", "Joss", 0, "male", "escort", Vector2(26, 58) * 0.5, "none", zero),
+		_bot("pico", "Pico", 0, "male", "raid", Vector2(32, 50) * 0.5, "none", zero),
+		_bot("bram", "Bram", 0, "male", "fight", Vector2(22, 42) * 0.5, "none", zero),
+		_bot("holt", "Holt", 1, "male", "defend", Vector2(160, 48) * 0.5, "none", zero),
+		_bot("sable", "Sable", 1, "female", "escort", Vector2(150, 58) * 0.5, "none", zero),
+		_bot("vex", "Vex", 1, "female", "raid", Vector2(144, 52) * 0.5, "none", zero),
+		_bot("mira", "Mira", 1, "female", "fight", Vector2(156, 56) * 0.5, "none", zero),
+		_bot("quinn", "Quinn", 1, "male", "fight", Vector2(148, 46) * 0.5, "none", zero),
 	]
 	var scene: PackedScene = unit_scene if unit_scene != null else UnitScene
 	for def in roster:
@@ -510,6 +521,13 @@ func enemy_door(u):
 
 
 func bot_goal(u) -> Dictionary:
+	if u.carrying == null:
+		var close = nearest_enemy(u, 2.5)
+		if close != null:
+			return {"pos": close.global_position, "unit": close}
+		var job: Dictionary = Supply.bot_goal(self, u)
+		if not job.is_empty():
+			return job
 	var mine = diamonds[u.team]
 	var theirs = diamonds[1 - u.team]
 	if u.carrying != null:
@@ -545,10 +563,10 @@ func bot_goal(u) -> Dictionary:
 
 
 func maybe_repair(u) -> void:
-	if u.channel != null or nearest_enemy(u, 8.0) != null:
+	if u.channel != null or nearest_enemy(u, 8.0) != null or int(u.wood) < 1:
 		return
 	for w in walls:
-		if w["kind"] != "door" or int(w["team"]) != u.team or float(w["hp"]) >= float(w["max"]):
+		if w["kind"] != "door" or int(w["team"]) != u.team or float(w["hp"]) <= 0.0 or float(w["hp"]) >= float(w["max"]):
 			continue
 		if float(_rect_hit(u.global_position, w["rect"])["d"]) < 1.6:
 			var ch := State.new()
@@ -639,6 +657,20 @@ func interact(u) -> void:
 			bd = dist5
 			best = spring
 			best_kind = "spring"
+	for drop in weapon_drops:
+		if str(u.weapon) != "none":
+			continue
+		var dist_drop: float = u.global_position.distance_to(drop["pos"])
+		if dist_drop < bd:
+			bd = dist_drop
+			best = drop
+			best_kind = "drop"
+	for pile in piles:
+		var dist_pile: float = u.global_position.distance_to(pile["pos"])
+		if dist_pile < bd:
+			bd = dist_pile
+			best = pile
+			best_kind = "pile"
 	for w in walls:
 		if w["kind"] != "door" or int(w["team"]) != u.team or float(w["hp"]) >= float(w["max"]):
 			continue
@@ -650,12 +682,12 @@ func interact(u) -> void:
 	if best == null:
 		float_at(u.global_position + Vector2(0, -0.9), "NOTHING TO USE", Color.WHITE)
 		return
-	if best_kind == "forge":
-		var kind := str(best["weapon"])
-		if str(u.weapon) == kind:
-			float_at(u.global_position + Vector2(0, -0.9), "ALREADY WIELDING", Color.WHITE)
-			return
-		u.equip_weapon(kind, true)
+	if best_kind == "drop":
+		Supply.take_drop(self, u, best)
+	elif best_kind == "pile":
+		Supply.take_pile(self, u, best)
+	elif best_kind == "forge":
+		Supply.use_forge(self, u, best)
 	elif best_kind == "sewer":
 		if float(best["hp"]) > 0.0:
 			float_at(u.global_position + Vector2(0, -0.9), "BREAK THE COVER", Color.WHITE)
@@ -689,11 +721,7 @@ func interact(u) -> void:
 		u.flight = flight
 		u.invuln = maxf(u.invuln, 0.4)
 	elif best_kind == "repair":
-		var repair := State.new()
-		repair.kind = "repair"
-		repair.t = 1.1
-		repair.src = best
-		u.channel = repair
+		Supply.use_door(self, u, best)
 
 
 func finish_channel(u) -> void:
@@ -703,6 +731,12 @@ func finish_channel(u) -> void:
 		return
 	if ch.kind == "repair" and ch.src != null:
 		var door = ch.src
+		if float(door["hp"]) <= 0.0:
+			return
+		if int(u.wood) < 1:
+			float_at(u.global_position + Vector2(0, -0.9), "NEED WOOD", Color.WHITE)
+			return
+		u.wood -= 1
 		door["hp"] = minf(float(door["max"]), float(door["hp"]) + 40.0)
 		door["shape"].disabled = float(door["hp"]) <= 0.0
 		_show_record(door, float(door["hp"]) > 0.0)
@@ -953,6 +987,7 @@ func resolve_swing(u) -> void:
 		return
 	_sfx("swing_fire" if str(u.weapon) == "sword" else "swing")
 	strike_area(u, u.global_position, u.facing, shape, weapon_damage(u), 0.0, 0.0)
+	Supply.chop(self, u)
 	for c2 in u.clones:
 		if c2.alive:
 			clone_swing(c2, u, shape)
@@ -973,6 +1008,8 @@ func weapon_damage(u) -> float:
 		base = Balance.SWORD_DAMAGE
 	elif str(u.weapon) == "wand":
 		base = Balance.WAND_DAMAGE
+	else:
+		base = Balance.FIST_DAMAGE
 	return base * Balance.pwr_mul(u.stats)
 
 
@@ -1083,6 +1120,7 @@ func kill_unit(u, src) -> void:
 		u.body_col.disabled = true
 	if u.carrying != null:
 		detach(u.carrying, u.global_position)
+	Supply.on_death(self, u)
 	u.cast = null
 	u.dash = null
 	u.flight = null
@@ -1121,6 +1159,7 @@ func respawn_unit(u) -> void:
 	u.shock = 0.0
 	u.slow_cast = 0.0
 	u.clear_guard()
+	Supply.on_respawn(u)
 	float_at(u.global_position + Vector2(0, -0.9), "READY", Color.WHITE)
 
 
@@ -1134,6 +1173,14 @@ func detach(d, at: Vector2) -> void:
 	d.bank = 0.0
 	d.in_flight = false
 	d.drop_delay = 0.35
+
+
+func drop_bag(u) -> void:
+	Supply.drop_bag(self, u)
+
+
+func bot_supply(u) -> void:
+	Supply.bot_act(self, u)
 
 
 func throw_diamond(u) -> void:
@@ -1522,9 +1569,13 @@ func nearest_walkable(pos: Vector2, radius: float, team: int) -> Vector2:
 
 
 func damage_door(w, amount: float) -> void:
-	w["hp"] = maxf(0.0, float(w["hp"]) - amount)
+	var before := float(w["hp"])
+	w["hp"] = maxf(0.0, before - amount)
 	w["shape"].disabled = float(w["hp"]) <= 0.0
 	_show_record(w, float(w["hp"]) > 0.0)
+	if float(w["hp"]) <= 0.0 and before > 0.0:
+		w["wood"] = 0
+		w["fiber"] = 0
 	if float(w["hp"]) <= 0.0:
 		burst(_rect_hit(w["rect"].get_center(), w["rect"])["at"], Color(0.79, 0.52, 0.23), 8, 2.0)
 
@@ -1789,6 +1840,9 @@ func start_online_match(crimson: Dictionary, azure: Dictionary, crimson_peer: in
 		child.free()
 	units.clear()
 	diamonds.clear()
+	piles.clear()
+	weapon_drops.clear()
+	nodes.clear()
 	WorldBuilder.populate(self, not headless_server)
 	_water_dirty = true
 	_spawn_diamonds()
@@ -1812,15 +1866,15 @@ func _spawn_online_units(crimson: Dictionary, azure: Dictionary, crimson_peer: i
 	var zero := Balance.blank_stats()
 	var roster: Array = [
 		_human_def("crimson", crimson, 0, crimson_peer, local_peer, Vector2(24, 50) * 0.5, 0.0),
-		_bot("nia", "Nia", 0, "female", "defend", Vector2(16, 48) * 0.5, "sword", zero),
-		_bot("joss", "Joss", 0, "male", "escort", Vector2(26, 58) * 0.5, "sword", zero),
-		_bot("pico", "Pico", 0, "male", "raid", Vector2(32, 50) * 0.5, "sword", zero),
-		_bot("bram", "Bram", 0, "male", "fight", Vector2(22, 42) * 0.5, "wand", zero),
+		_bot("nia", "Nia", 0, "female", "defend", Vector2(16, 48) * 0.5, "none", zero),
+		_bot("joss", "Joss", 0, "male", "escort", Vector2(26, 58) * 0.5, "none", zero),
+		_bot("pico", "Pico", 0, "male", "raid", Vector2(32, 50) * 0.5, "none", zero),
+		_bot("bram", "Bram", 0, "male", "fight", Vector2(22, 42) * 0.5, "none", zero),
 		_human_def("azure", azure, 1, azure_peer, local_peer, Vector2(152, 50) * 0.5, PI),
-		_bot("sable", "Sable", 1, "female", "escort", Vector2(150, 58) * 0.5, "sword", zero),
-		_bot("vex", "Vex", 1, "female", "raid", Vector2(144, 52) * 0.5, "sword", zero),
-		_bot("mira", "Mira", 1, "female", "fight", Vector2(156, 56) * 0.5, "wand", zero),
-		_bot("quinn", "Quinn", 1, "male", "fight", Vector2(148, 46) * 0.5, "sword", zero),
+		_bot("sable", "Sable", 1, "female", "escort", Vector2(150, 58) * 0.5, "none", zero),
+		_bot("vex", "Vex", 1, "female", "raid", Vector2(144, 52) * 0.5, "none", zero),
+		_bot("mira", "Mira", 1, "female", "fight", Vector2(156, 56) * 0.5, "none", zero),
+		_bot("quinn", "Quinn", 1, "male", "fight", Vector2(148, 46) * 0.5, "none", zero),
 	]
 	var scene: PackedScene = unit_scene if unit_scene != null else UnitScene
 	for def in roster:
@@ -1898,11 +1952,16 @@ func apply_net_buttons(unit, buttons: int) -> void:
 		else:
 			unit.try_swing()
 	if buttons & 2:
-		throw_diamond(unit)
+		if unit.carrying != null:
+			throw_diamond(unit)
+		elif unit.bag_total() > 0:
+			drop_bag(unit)
 	if buttons & 4:
 		unit.try_hop()
 	if buttons & 8:
 		interact(unit)
+	if buttons & 16:
+		drop_bag(unit)
 	if buttons & 32:
 		unit.toggle_guard()
 	var skill := (buttons >> 6) & 7
@@ -2002,6 +2061,7 @@ func pack_net_bytes(ack: Dictionary) -> PackedByteArray:
 		result_team = 255 if team < 0 else team
 	buf.put_u8(result_code)
 	buf.put_u8(result_team)
+	Supply.pack(self, buf)
 	return buf.data_array.slice(0, buf.get_position())
 
 
@@ -2114,7 +2174,8 @@ func _decode_net_bytes(raw: PackedByteArray) -> Dictionary:
 		"blasts": blast_rows,
 		"kill": kill_text,
 		"result_type": result_type,
-		"result_team": -1 if result_team_b == 255 else int(result_team_b)
+		"result_team": -1 if result_team_b == 255 else int(result_team_b),
+		"supply": Supply.read(buf, unit_count) if buf.get_available_bytes() > 0 else {},
 	}
 
 
@@ -2315,6 +2376,7 @@ func apply_net_snapshot(blob: Dictionary) -> void:
 	_apply_net_cds(blob.get("cds", []))
 	_apply_net_doors(blob.get("doors", []))
 	_apply_net_blasts(blob.get("blasts", []))
+	Supply.apply(self, blob.get("supply", {}))
 	var kill_text := str(blob.get("kill", ""))
 	if kill_text != "":
 		if kill_call == null or str(kill_call.get("text", "")) != kill_text:

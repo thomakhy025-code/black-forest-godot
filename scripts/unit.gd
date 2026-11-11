@@ -52,6 +52,9 @@ var respawn_t := 0.0
 var dead := false
 var hit_flash := 0.0
 var carrying = null
+var wood := 0
+var hide := 0
+var fiber := 0
 var guard := false
 var guard_block := false
 var wish := Vector2.ZERO
@@ -151,6 +154,9 @@ func setup(def: Dictionary, sim_node: Node) -> void:
 	skills = {}
 	cds = {}
 	weapon = ""
+	wood = 0
+	hide = 0
+	fiber = 0
 	equip_weapon(str(def.get("weapon", "none")), false)
 	invuln = float(def.get("invuln", 0.0))
 	collision_mask = sim.mask_for(team)
@@ -371,6 +377,7 @@ func tick_bot(_dt: float) -> void:
 			try_swing()
 	if role == "defend":
 		sim.maybe_repair(self)
+	sim.bot_supply(self)
 	if warp_cd <= 0.0:
 		sim.bot_use_map(self)
 	var goal: Dictionary = sim.bot_goal(self)
@@ -398,6 +405,9 @@ func tick_bot(_dt: float) -> void:
 
 func move_speed() -> float:
 	var s := (Balance.PLAYER_SPEED if is_player or is_remote else Balance.BOT_SPEED) * Balance.spd_mul(stats)
+	var load := bag_total()
+	if load > 0:
+		s *= maxf(Balance.BAG_FLOOR, 1.0 - Balance.BAG_SLOW * float(load))
 	if carrying != null:
 		s *= Balance.CARRY_SPEED
 	if sim.in_water(global_position) and hop == null and dash == null and flight == null:
@@ -511,11 +521,12 @@ func try_swing() -> bool:
 		if is_player:
 			sim.float_at(global_position + Vector2(0, -0.9), "SHOCKED", Color(1, 0.96, 0.66))
 		return false
-	if weapon != "sword" and weapon != "wand":
-		if is_player:
-			sim.float_at(global_position + Vector2(0, -0.9), "NO WEAPON", Color.WHITE)
-		return false
-	attack_wind = 0.18 if weapon == "wand" else 0.22
+	if weapon == "wand":
+		attack_wind = 0.18
+	elif weapon == "sword":
+		attack_wind = 0.22
+	else:
+		attack_wind = 0.16
 	attack_cd = Balance.ATTACK_INTERVAL
 	return true
 
@@ -601,12 +612,16 @@ func clear_guard() -> void:
 	guard_block = false
 
 
+func bag_total() -> int:
+	return wood + hide + fiber
+
+
 func swing_shape() -> Dictionary:
 	if weapon == "wand":
 		return {"kind": "rect", "range": Balance.WAND_LEN, "arc": 0.0, "len": Balance.WAND_LEN, "w": Balance.WAND_W}
 	if weapon == "sword":
 		return {"kind": "arc", "range": Balance.SWORD_RANGE, "arc": Balance.SWORD_ARC, "len": Balance.SWORD_RANGE, "w": 0.0}
-	return {"kind": "none", "range": 0.0, "arc": 0.0, "len": 0.0, "w": 0.0}
+	return {"kind": "arc", "range": Balance.FIST_RANGE, "arc": Balance.FIST_ARC, "len": Balance.FIST_RANGE, "w": 0.0}
 
 
 func _follow_clones(dt: float) -> void:
