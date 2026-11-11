@@ -105,6 +105,25 @@ func _ready() -> void:
 	_check("gather through a nearby enemy", job_pos.distance_to(job_c.get("pos", Vector2.ZERO)) < 0.25)
 	holt.global_position = holt_at
 	holt.force_update_transform()
+	var sword_pad = null
+	for forge in match_node.forges:
+		if int(forge.get("team", -1)) == 0 and str(forge.get("weapon", "")) == "sword":
+			sword_pad = forge
+	joss.wood = 0
+	joss.hide = 0
+	joss.fiber = 0
+	joss.bot_lock = {"pos": sword_pad["pos"], "unit": null, "kind": "forge", "ref": sword_pad}
+	var left_forge: Dictionary = match_node.bot_goal(joss)
+	_check("leaves the forge", str(left_forge.get("kind", "")) != "forge")
+	var outside: Vector2 = nia.global_position
+	nia.global_position = Vector2(12, 12)
+	nia.force_update_transform()
+	nia.bot_corner = ""
+	var around: Vector2 = match_node.steer_point(nia, Vector2(7.5, 17.2))
+	_check("around the wall", around.y < 13.2 or around.x > 21.0)
+	nia.global_position = outside
+	nia.bot_corner = ""
+	nia.force_update_transform()
 	if job_kind == "node":
 		var stand: Vector2 = match_node.stand_point(joss, job_pos)
 		_check("stands off the trunk", stand.distance_to(job_pos) > 0.45)

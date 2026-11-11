@@ -480,28 +480,64 @@ func steer_point(u, goal: Vector2) -> Vector2:
 	if _walk_clear(u, goal):
 		u.bot_corner = ""
 		return goal
-	var start := Balance.closest_node(u.global_position)
+	var start := _path_start(u)
 	var goal_id := _node_seeing(goal, u.team)
 	var cached: Dictionary = _steer.get(u.unit_id, {})
 	var path: Array = cached.get("path", [])
 	if str(cached.get("from", "")) != start or str(cached.get("to", "")) != goal_id:
 		path = Balance.astar(start, goal_id)
 		_steer[u.unit_id] = {"from": start, "to": goal_id, "path": path}
-	var here: float = u.global_position.distance_to(goal)
 	var held := str(u.bot_corner)
 	if held != "" and path.has(held):
 		var held_at: Vector2 = Balance.NODES[held]
-		if u.global_position.distance_to(held_at) > 1.15 and held_at.distance_to(goal) < here - 0.2:
+		if u.global_position.distance_to(held_at) > 1.15 and _walk_clear(u, held_at):
 			return held_at
+	var fallback := goal
+	var have_fallback := false
 	for id in path:
 		var n: Vector2 = Balance.NODES[id]
 		if u.global_position.distance_to(n) < 1.15:
 			continue
-		if n.distance_to(goal) < here - 0.2:
+		if not have_fallback:
+			fallback = n
+			have_fallback = true
+		if _walk_clear(u, n):
 			u.bot_corner = str(id)
 			return n
+	if _inside_yard(goal, u.team) and not _inside_yard(u.global_position, u.team):
+		u.bot_corner = ""
+		return _outside_flank(u)
 	u.bot_corner = ""
-	return goal
+	return fallback
+
+
+func _path_start(u) -> String:
+	var near := Balance.closest_node(u.global_position)
+	var near_at: Vector2 = Balance.NODES[near]
+	if los(u.global_position, near_at, u.team):
+		return near
+	var best := ""
+	var bd := 1.0e12
+	for id in Balance.NODES.keys():
+		var at: Vector2 = Balance.NODES[id]
+		if not los(u.global_position, at, u.team):
+			continue
+		var dist: float = u.global_position.distance_squared_to(at)
+		if dist < bd:
+			bd = dist
+			best = str(id)
+	if best == "":
+		return near
+	return best
+
+
+func _outside_flank(u) -> Vector2:
+	var gate := _yard_exit(u.team)
+	if u.global_position.y < 14.0:
+		return Vector2(gate.x, minf(u.global_position.y, 12.0))
+	if u.global_position.y > 37.0:
+		return Vector2(gate.x, maxf(u.global_position.y, 39.0))
+	return gate
 
 
 func stand_point(u, goal: Vector2) -> Vector2:

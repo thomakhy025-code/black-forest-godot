@@ -249,6 +249,8 @@ static func lock_ok(match_node, u, lock: Dictionary) -> bool:
 		if bool(ref.get("built", false)):
 			if str(u.weapon) != "none" or not machines_ready(match_node, int(u.team)):
 				return false
+		elif not _holding_for(u, ref):
+			return false
 		lock["pos"] = ref["pos"]
 		return true
 	if kind == "door":
@@ -266,6 +268,14 @@ static func lock_ok(match_node, u, lock: Dictionary) -> bool:
 			return false
 		lock["pos"] = ref["pos"]
 		return true
+	return false
+
+
+static func _holding_for(u, forge) -> bool:
+	var need := _remaining(forge)
+	for key in _KEYS:
+		if int(need.get(key, 0)) > 0 and int(u.get(key)) > 0:
+			return true
 	return false
 
 
