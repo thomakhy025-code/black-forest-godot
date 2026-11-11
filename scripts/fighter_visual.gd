@@ -5,9 +5,9 @@ extends Node2D
 
 const Balance = preload("res://scripts/balance.gd")
 const ART := "res://assets/art/fighters/game/"
-const BODY_H := 1.28
-const ARM_LEN := 0.46
-const WEAPON_LEN := 0.86
+const BODY_H := 1.52
+const ARM_LEN := 0.55
+const WEAPON_LEN := 1.02
 
 var gender := "female"
 var team := 0
@@ -27,6 +27,8 @@ var gait := 0.0
 
 var _bob: Node2D
 var _body: Sprite2D
+var _rim: Sprite2D
+var _shadow: Polygon2D
 var _arm: Node2D
 var _hand: Sprite2D
 var _weapon: Sprite2D
@@ -60,9 +62,26 @@ func sync_from(u) -> void:
 
 
 func _ready() -> void:
+	_shadow = Polygon2D.new()
+	_shadow.name = "Shadow"
+	_shadow.polygon = PackedVector2Array([
+		Vector2(-0.28, 0.0), Vector2(-0.2, 0.08), Vector2(0.0, 0.12),
+		Vector2(0.22, 0.08), Vector2(0.3, 0.0), Vector2(0.16, -0.06),
+		Vector2(0.0, -0.08), Vector2(-0.16, -0.06),
+	])
+	_shadow.color = Color(0.02, 0.03, 0.02, 0.45)
+	_shadow.position = Vector2(0.06, 0.04)
+	_shadow.z_index = -2
+	add_child(_shadow)
 	_bob = Node2D.new()
 	_bob.name = "Bob"
 	add_child(_bob)
+	_rim = Sprite2D.new()
+	_rim.name = "Rim"
+	_rim.centered = true
+	_rim.z_index = -1
+	_rim.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	_bob.add_child(_rim)
 	_body = Sprite2D.new()
 	_body.name = "Body"
 	_body.centered = true
@@ -110,11 +129,12 @@ func _process(delta: float) -> void:
 		gait += delta * 6.0
 	_apply_pictures(false)
 	var view := _sheet_view()
-	var shoulder := Vector2(0.15, -0.74)
+	var lift := BODY_H / 1.28
+	var shoulder := Vector2(0.15, -0.74) * lift
 	if view == "side":
-		shoulder = Vector2(0.12, -0.68)
+		shoulder = Vector2(0.12, -0.68) * lift
 	elif view == "back":
-		shoulder = Vector2(0.16, -0.74)
+		shoulder = Vector2(0.16, -0.74) * lift
 	_bob.scale = Vector2(-1.0 if _facing_view() == "left" else 1.0, 1.0)
 	_arm.position = shoulder
 	var dir := _arm_dir()
@@ -141,6 +161,9 @@ func _process(delta: float) -> void:
 	_weapon.visible = not carrying and not dead and weapon_kind != "none"
 	_hand.visible = not dead
 	_body.visible = true
+	_rim.visible = not dead
+	_shadow.visible = not dead
+	_rim.modulate = Color(1.0, 0.22, 0.32, 0.55) if team == 0 else Color(0.25, 0.58, 1.0, 0.55)
 
 
 func _apply_pictures(force: bool) -> void:
@@ -152,10 +175,13 @@ func _apply_pictures(force: bool) -> void:
 		_body_key = body_key
 		var body_tex := _tex("body-%s.png" % body_key)
 		_body.texture = body_tex
+		_rim.texture = body_tex
 		if body_tex != null:
 			var s := BODY_H / float(body_tex.get_height())
 			_body.scale = Vector2(s, s)
 			_body.position = Vector2(0.0, -BODY_H * 0.5)
+			_rim.scale = Vector2(s * 1.035, s * 1.035)
+			_rim.position = Vector2(-0.02, -BODY_H * 0.5 - 0.02)
 	var arm_name := "arm-wand.png" if weapon_kind == "wand" else "arm-sword.png"
 	var weapon_name := "weapon-wand.png" if weapon_kind == "wand" else "weapon-sword.png"
 	var arm_key := arm_name + weapon_name

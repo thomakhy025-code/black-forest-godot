@@ -1,6 +1,5 @@
 extends Node
-## Short generated tones played through AudioStreamPlayer.
-## Skill ids also get a short pitched accent on top of the wav.
+## Pooled players and tones built once. A hit no longer allocates a stream.
 
 const ACCENT := {
 	"fireball": 190.0,
@@ -15,45 +14,71 @@ const ACCENT := {
 	"dash": 920.0,
 	"explode": 96.0,
 	"hop": 640.0,
+	"hit": 128.0,
+	"kill": 84.0,
 }
 
+var _players: Array[AudioStreamPlayer] = []
+var _next := 0
+var _wavs := {}
+var _tones := {}
 
-func play(id: String, volume_db: float = -8.0) -> void:
-	var path := "res://assets/audio/%s.wav" % id
-	if ResourceLoader.exists(path):
+
+func _ready() -> void:
+	for _i in 12:
 		var player := AudioStreamPlayer.new()
-		player.stream = load(path)
-		player.volume_db = volume_db
-		player.finished.connect(player.queue_free)
 		add_child(player)
-		player.play()
-	_accent(id, volume_db)
+		_players.append(player)
+	for id in ACCENT.keys():
+		_tones[id] = _tone(float(ACCENT[id]), 0.16 if id == "kill" or id == "mega" else 0.09, id == "hit" or id == "kill" or id == "explode" or id == "mega")
 
 
-func _accent(id: String, volume_db: float) -> void:
-	if not ACCENT.has(id):
+func play(id: String, volume_db: float = -6.0) -> void:
+	if _players.is_empty():
 		return
+	var loud := volume_db
+	if id == "kill" or id == "mega" or id == "explode":
+		loud = -1.5
+	elif id == "hit" or id == "swing" or id == "swing_fire" or id == "fireball":
+		loud = -3.5
+	var path := "res://assets/audio/%s.wav" % id
+	if not _wavs.has(id) and ResourceLoader.exists(path):
+		_wavs[id] = load(path)
+	if _wavs.has(id):
+		_fire(_wavs[id], loud, randf_range(0.94, 1.07))
+	if _tones.has(id):
+		_fire(_tones[id], loud - 1.5, randf_range(0.92, 1.08))
+
+
+func _fire(stream: AudioStream, db: float, pitch: float) -> void:
+	var player := _players[_next]
+	_next = (_next + 1) % _players.size()
+	player.stop()
+	player.stream = stream
+	player.volume_db = db
+	player.pitch_scale = pitch
+	player.play()
+
+
+func _tone(start_hz: float, seconds: float, noise: bool) -> AudioStreamWAV:
 	var rate := 22050
-	var count := int(rate * 0.14)
+	var count := int(rate * seconds)
 	var data := PackedByteArray()
 	data.resize(count * 2)
-	var start_hz: float = float(ACCENT[id])
 	var phase := 0.0
 	for i in count:
 		var k := float(i) / float(count)
-		var freq := lerpf(start_hz, start_hz * 0.55, k)
+		var freq := lerpf(start_hz, start_hz * 0.45, k)
 		phase += TAU * freq / float(rate)
 		var env := (1.0 - k) * (1.0 - k)
-		var sample := sin(phase) * env * 0.42 + sin(phase * 2.0) * env * 0.12
+		var sample := sin(phase) * env * 0.55 + sin(phase * 2.0) * env * 0.16
+		if noise:
+			var hash := float((i * 1103515245 + 12345) & 2047) / 1023.0 - 1.0
+			sample += hash * env * 0.42
 		data.encode_s16(i * 2, int(clampf(sample, -1.0, 1.0) * 30000.0))
 	var stream := AudioStreamWAV.new()
 	stream.format = AudioStreamWAV.FORMAT_16_BITS
 	stream.mix_rate = rate
 	stream.stereo = false
 	stream.data = data
-	var tone := AudioStreamPlayer.new()
-	tone.stream = stream
-	tone.volume_db = volume_db - 3.0
-	tone.finished.connect(tone.queue_free)
-	add_child(tone)
-	tone.play()
+	return stream

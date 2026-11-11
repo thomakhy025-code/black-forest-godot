@@ -1056,6 +1056,7 @@ func try_hit(target, amount: float, src, color: Color) -> bool:
 	target.hit_flash = 0.12
 	float_at(target.global_position + Vector2(0, -0.9), str(int(round(amount))), color)
 	shake = minf(1.0, shake + (0.35 if target.is_player else 0.12))
+	_sfx("hit")
 	burst(target.global_position, color, 4, 1.5)
 	if target.hp <= 0.0:
 		kill_unit(target, src)
@@ -2166,11 +2167,29 @@ func _spawn_skill_fx_at(skill_name: String, pos: Vector2, ang: float) -> void:
 func _note_remote_skill(u, skill: int, pos: Vector2, facing: float) -> void:
 	var prev := int(u.net_skill)
 	u.net_skill = skill
-	if net_role != "client" or prev == 0 or skill != 0:
+	if net_role != "client":
+		return
+	if prev == 0 and skill > 0 and skill != 6 and u != player:
+		var cue := _remote_skill_sfx(skill)
+		if cue != "":
+			_sfx(cue)
+	if prev == 0 or skill != 0:
 		return
 	if prev < 0 or prev >= Balance.NET_SKILL_IDS.size():
 		return
 	_spawn_skill_fx_at(str(Balance.NET_SKILL_IDS[prev]), pos, facing)
+
+
+func _remote_skill_sfx(skill: int) -> String:
+	if skill == 1 or skill == 2:
+		return "swing_fire"
+	if skill == 3:
+		return "firesword"
+	if skill == 4:
+		return "fireball"
+	if skill == 5:
+		return "ice"
+	return ""
 
 
 func _pack_blasts(buf: StreamPeerBuffer) -> void:
@@ -2207,6 +2226,7 @@ func _apply_net_blasts(rows: Array) -> void:
 		if not _blast_seen.has(key):
 			_blast_seen[key] = true
 			shake = maxf(shake, 2.6)
+			_sfx("mega")
 		var fx := State.new()
 		fx.pos = pos
 		fx.r = float(row[2])
@@ -2239,11 +2259,22 @@ func apply_net_snapshot(blob: Dictionary) -> void:
 			continue
 		var pos := Vector2(float(row[1]), float(row[2]))
 		var facing := float(row[3])
+		var prev_hp := float(u.hp)
+		var prev_pose := int(u.net_pose)
+		var was_dead := bool(u.dead)
 		u.hp = float(row[4])
 		u.mp = float(row[5])
 		var flags := int(row[6])
 		var pose := int(row[7])
 		u.net_pose = pose
+		if prev_pose != 2 and pose == 2:
+			_sfx("swing_fire" if str(u.weapon) == "sword" else "swing")
+		if (flags & 1) != 0 and not was_dead:
+			_sfx("kill")
+		elif prev_hp - u.hp > 0.5:
+			_sfx("hit")
+			if u == player:
+				shake = minf(2.2, shake + 0.55)
 		var skill := int(row[8]) if row.size() > 8 else 0
 		_note_remote_skill(u, skill, pos, facing)
 		var now_dead := (flags & 1) != 0

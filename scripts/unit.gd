@@ -108,8 +108,8 @@ func _ready() -> void:
 			visual.visible = false
 		if anim:
 			anim.active = false
-	else:
-		_build_anims()
+	if anim:
+		anim.active = false
 	set_physics_process(false)
 
 
@@ -655,20 +655,6 @@ func _sync_visual() -> void:
 			fighter.modulate.a = fade
 	if body_col.disabled != dead:
 		body_col.disabled = dead
-	if anim != null:
-		var next := "lib/idle"
-		if dead:
-			next = "lib/death"
-		elif root_locked():
-			next = "lib/channel"
-		elif swing_vis > 0.0:
-			next = "lib/swing"
-		elif cast != null:
-			next = "lib/cast"
-		elif move_blend > 0.25:
-			next = "lib/walk"
-		if anim.current_animation != next:
-			anim.play(next)
 	var key := int(hp)
 	key = key * 2 + (1 if swing_vis > 0.0 else 0)
 	key = key * 2 + (1 if guard and carrying != null else 0)
@@ -699,9 +685,9 @@ func _draw() -> void:
 	if not dead and _font != null:
 		var w := 0.9
 		var ratio := clampf(hp / max_hp, 0.0, 1.0)
-		draw_rect(Rect2(-w * 0.5, -1.42, w, 0.08), Color(0, 0, 0, 0.55))
-		draw_rect(Rect2(-w * 0.5, -1.42, w * ratio, 0.08), Color(0.35, 0.85, 0.4) if ratio > 0.35 else Color(0.9, 0.3, 0.25))
-		draw_set_transform(Vector2(0, -1.62), 0.0, Vector2(0.02, 0.02))
+		draw_rect(Rect2(-w * 0.5, -1.78, w, 0.08), Color(0, 0, 0, 0.55))
+		draw_rect(Rect2(-w * 0.5, -1.78, w * ratio, 0.08), Color(0.35, 0.85, 0.4) if ratio > 0.35 else Color(0.9, 0.3, 0.25))
+		draw_set_transform(Vector2(0, -1.98), 0.0, Vector2(0.02, 0.02))
 		var width := _font.get_string_size(unit_name, HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x
 		draw_string(_font, Vector2(-width * 0.5, 0), unit_name, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color.WHITE)
 		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
@@ -729,55 +715,3 @@ func _draw_swing_rect() -> void:
 	])
 	draw_polyline(edge, Color(0.85, 0.95, 1.0, 0.9), 0.06, true)
 
-
-func _build_anims() -> void:
-	var lib := AnimationLibrary.new()
-	lib.add_animation("idle", _bob_anim(0.9, 0.045))
-	lib.add_animation("walk", _bob_anim(0.42, 0.07))
-	var swing := Animation.new()
-	swing.length = 0.26
-	var track := swing.add_track(Animation.TYPE_VALUE)
-	swing.track_set_path(track, "Visual/WeaponPivot:rotation")
-	swing.track_insert_key(track, 0.0, -1.15)
-	swing.track_insert_key(track, 0.26, 1.15)
-	lib.add_animation("swing", swing)
-	var cast_anim := Animation.new()
-	cast_anim.length = 0.5
-	cast_anim.loop_mode = Animation.LOOP_LINEAR
-	var scale_track := cast_anim.add_track(Animation.TYPE_VALUE)
-	cast_anim.track_set_path(scale_track, "Visual:scale")
-	cast_anim.track_insert_key(scale_track, 0.0, Vector2.ONE)
-	cast_anim.track_insert_key(scale_track, 0.25, Vector2(1.06, 1.06))
-	cast_anim.track_insert_key(scale_track, 0.5, Vector2.ONE)
-	lib.add_animation("cast", cast_anim)
-	var channel := Animation.new()
-	channel.length = 0.3
-	channel.loop_mode = Animation.LOOP_LINEAR
-	var pos_track := channel.add_track(Animation.TYPE_VALUE)
-	channel.track_set_path(pos_track, "Visual:position")
-	channel.track_insert_key(pos_track, 0.0, Vector2.ZERO)
-	channel.track_insert_key(pos_track, 0.15, Vector2(0.04, 0))
-	channel.track_insert_key(pos_track, 0.3, Vector2.ZERO)
-	lib.add_animation("channel", channel)
-	var death := Animation.new()
-	death.length = 0.45
-	var rot := death.add_track(Animation.TYPE_VALUE)
-	death.track_set_path(rot, "Visual:rotation")
-	death.track_insert_key(rot, 0.0, 0.0)
-	death.track_insert_key(rot, 0.45, 1.2)
-	lib.add_animation("death", death)
-	anim.root_node = NodePath("..")
-	anim.add_animation_library("lib", lib)
-	anim.play("lib/idle")
-
-
-func _bob_anim(length: float, amount: float) -> Animation:
-	var anim_bob := Animation.new()
-	anim_bob.length = length
-	anim_bob.loop_mode = Animation.LOOP_LINEAR
-	var track := anim_bob.add_track(Animation.TYPE_VALUE)
-	anim_bob.track_set_path(track, "Visual:position")
-	anim_bob.track_insert_key(track, 0.0, Vector2.ZERO)
-	anim_bob.track_insert_key(track, length * 0.5, Vector2(0, -amount))
-	anim_bob.track_insert_key(track, length, Vector2.ZERO)
-	return anim_bob

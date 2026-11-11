@@ -41,21 +41,23 @@ static func populate(match_node: Node2D, decorate: bool = true) -> void:
 	_grass(parent)
 	_bounds(parent)
 	for poly in rivers:
-		_poly(parent, poly, Color(0.18, 0.58, 0.9, 0.95))
-		_poly(parent, inset_poly(poly, 0.78), Color(0.55, 0.88, 1.0, 0.32))
-	_poly(parent, pond_s, Color(0.22, 0.64, 0.94, 0.95))
-	_poly(parent, inset_poly(pond_s, 0.8), Color(0.62, 0.9, 1.0, 0.34))
+		_poly(parent, poly, Color(0.08, 0.28, 0.52, 0.96))
+		_poly(parent, inset_poly(poly, 0.72), Color(0.45, 0.82, 1.0, 0.4))
+	_poly(parent, pond_s, Color(0.07, 0.32, 0.58, 0.96))
+	_poly(parent, inset_poly(pond_s, 0.72), Color(0.55, 0.9, 1.0, 0.42))
 
 	var isles: Array = []
 	isles.append({"pos": Vector2(88.2, 50.4) * 0.5, "poly": isle_s, "r": 0.0})
 	isles.append({"pos": Vector2(96.8, 43.4) * 0.5, "r": 1.55 * 0.5})
 	for isle in isles:
 		if isle.has("poly"):
-			_poly(parent, isle["poly"], Color(0.62, 0.4, 0.22, 1))
-			_poly(parent, inset_poly(isle["poly"], 0.62), Color(0.55, 0.88, 0.36, 1))
+			_drop(parent, isle["poly"], Vector2(0.06, 0.1))
+			_poly(parent, isle["poly"], Color(0.42, 0.26, 0.12, 1))
+			_poly(parent, inset_poly(isle["poly"], 0.72), Color(0.36, 0.58, 0.2, 1))
 		else:
-			_poly(parent, circle_poly(isle["pos"], float(isle["r"]), 12), Color(0.62, 0.4, 0.22, 1))
-			_poly(parent, circle_poly(isle["pos"], float(isle["r"]) * 0.72, 10), Color(0.55, 0.88, 0.36, 1))
+			_drop(parent, circle_poly(isle["pos"], float(isle["r"]), 10), Vector2(0.06, 0.1))
+			_poly(parent, circle_poly(isle["pos"], float(isle["r"]), 12), Color(0.42, 0.26, 0.12, 1))
+			_poly(parent, circle_poly(isle["pos"] + Vector2(-0.04, -0.04), float(isle["r"]) * 0.7, 10), Color(0.36, 0.58, 0.2, 1))
 
 	var bridges: Array = []
 	var deck := 7.6
@@ -66,7 +68,8 @@ static func populate(match_node: Node2D, decorate: bool = true) -> void:
 	for rect_item in bridge_specs:
 		var rect: Rect2 = rect_item
 		var poly := rect_poly(rect)
-		_poly(parent, poly, Color(0.78, 0.56, 0.3, 1))
+		_drop(parent, poly, Vector2(0.08, 0.14))
+		_poly(parent, poly, Color(0.62, 0.42, 0.22, 1))
 		for plank in 4:
 			var y: float = rect.position.y + rect.size.y * (float(plank) + 0.5) / 4.0
 			_poly(parent, rect_poly(Rect2(rect.position.x + 0.08, y, rect.size.x - 0.16, 0.05)), Color(0.5, 0.34, 0.16, 0.9))
@@ -141,14 +144,22 @@ static func populate(match_node: Node2D, decorate: bool = true) -> void:
 static func _grass(parent: Node2D) -> void:
 	_poly(parent, PackedVector2Array([
 		Vector2(0, 0), Vector2(Balance.MAP_W, 0), Vector2(Balance.MAP_W, Balance.MAP_H), Vector2(0, Balance.MAP_H)
-	]), Color(0.58, 0.84, 0.28, 1))
+	]), Color(0.2, 0.34, 0.14, 1))
+	_poly(parent, PackedVector2Array([
+		Vector2(18, 7), Vector2(70, 7), Vector2(70, 43), Vector2(18, 43)
+	]), Color(0.34, 0.48, 0.2, 1))
 	_tufts(parent)
 	_poly(parent, PackedVector2Array([
 		Vector2(0, 0), Vector2(Balance.MAP_W, 0), Vector2(Balance.MAP_W, 4.2), Vector2(0, 4.2)
-	]), Color(0.8, 0.74, 0.58, 1))
+	]), Color(0.55, 0.48, 0.32, 1))
 	_poly(parent, PackedVector2Array([
 		Vector2(0, 45.5), Vector2(Balance.MAP_W, 45.5), Vector2(Balance.MAP_W, Balance.MAP_H), Vector2(0, Balance.MAP_H)
-	]), Color(0.92, 0.8, 0.48, 1))
+	]), Color(0.62, 0.5, 0.28, 1))
+	var shade := Color(0.03, 0.06, 0.02, 0.42)
+	_poly(parent, rect_poly(Rect2(0, 0, 2.4, Balance.MAP_H)), shade)
+	_poly(parent, rect_poly(Rect2(Balance.MAP_W - 2.4, 0, 2.4, Balance.MAP_H)), shade)
+	_poly(parent, rect_poly(Rect2(0, 0, Balance.MAP_W, 1.5)), shade)
+	_poly(parent, rect_poly(Rect2(0, Balance.MAP_H - 1.6, Balance.MAP_W, 1.6)), shade)
 
 
 static func _bounds(parent: Node2D) -> void:
@@ -172,8 +183,12 @@ static func _bounds(parent: Node2D) -> void:
 
 
 static func _floors(parent: Node2D) -> void:
-	_poly(parent, rect_poly(Rect2(4.5, 14.5, 15.0, 22.0)), Color(0.96, 0.9, 0.72, 1))
-	_poly(parent, rect_poly(Rect2(68.5, 14.5, 15.0, 22.0)), Color(0.96, 0.9, 0.72, 1))
+	_drop(parent, rect_poly(Rect2(4.5, 14.5, 15.0, 22.0)), Vector2(0.1, 0.16))
+	_drop(parent, rect_poly(Rect2(68.5, 14.5, 15.0, 22.0)), Vector2(0.1, 0.16))
+	_poly(parent, rect_poly(Rect2(4.5, 14.5, 15.0, 22.0)), Color(0.9, 0.82, 0.62, 1))
+	_poly(parent, rect_poly(Rect2(68.5, 14.5, 15.0, 22.0)), Color(0.9, 0.82, 0.62, 1))
+	_poly(parent, rect_poly(Rect2(4.7, 14.7, 14.6, 0.35)), Color(1.0, 0.96, 0.86, 0.7))
+	_poly(parent, rect_poly(Rect2(68.7, 14.7, 14.6, 0.35)), Color(1.0, 0.96, 0.86, 0.7))
 	_poly(parent, rect_poly(Rect2(12.0, 24.2, 7.5, 0.55)), Color(0.75, 0.16, 0.28, 0.95))
 	_poly(parent, rect_poly(Rect2(68.5, 24.2, 7.5, 0.55)), Color(0.16, 0.4, 0.78, 0.95))
 
@@ -215,6 +230,7 @@ static func _walls(parent: Node2D) -> Array:
 		parent.add_child(body)
 		var visual: Polygon2D = null
 		if _decorate:
+			_drop(parent, rect_poly(rect), Vector2(0.08, 0.12))
 			visual = Polygon2D.new()
 			visual.polygon = rect_poly(rect)
 			visual.color = color
@@ -224,7 +240,9 @@ static func _walls(parent: Node2D) -> Array:
 				_poly(parent, rect_poly(inset), Color(1, 1, 1, 0.28))
 			else:
 				var foot := Rect2(rect.position.x, rect.position.y + rect.size.y * 0.62, rect.size.x, rect.size.y * 0.38)
-				_poly(parent, rect_poly(foot), Color(0.62, 0.5, 0.34, 0.9))
+				_poly(parent, rect_poly(foot), Color(0.28, 0.2, 0.12, 0.9))
+				var lip := Rect2(rect.position.x, rect.position.y, rect.size.x, minf(0.1, rect.size.y * 0.18))
+				_poly(parent, rect_poly(lip), Color(1.0, 0.96, 0.86, 0.75))
 				_merlons(parent, rect)
 		walls.append({
 			"kind": spec["kind"],
@@ -261,9 +279,11 @@ static func _trees(parent: Node2D) -> Array:
 		col.shape = shape
 		body.add_child(col)
 		parent.add_child(body)
-		_poly(parent, circle_poly(pos, radius, 12), Color(0.16, 0.62, 0.26, 1))
-		_poly(parent, circle_poly(pos + Vector2(-0.12, -0.08), radius * 0.42, 8), Color(0.58, 0.88, 0.38, 1))
-		_poly(parent, circle_poly(pos + Vector2(0.02, 0.06), radius * 0.22, 8), Color(0.45, 0.28, 0.16, 1))
+		_drop(parent, circle_poly(pos, radius, 10), Vector2(0.1, 0.14))
+		_poly(parent, circle_poly(pos + Vector2(0.04, 0.08), radius, 12), Color(0.05, 0.18, 0.08, 1))
+		_poly(parent, circle_poly(pos + Vector2(-0.04, -0.05), radius * 0.82, 10), Color(0.14, 0.46, 0.18, 1))
+		_poly(parent, circle_poly(pos + Vector2(-0.12, -0.12), radius * 0.38, 8), Color(0.62, 0.86, 0.34, 1))
+		_poly(parent, circle_poly(pos + Vector2(0.02, 0.1), radius * 0.16, 6), Color(0.28, 0.16, 0.08, 1))
 		trees.append({"pos": pos, "r": radius})
 	return trees
 
@@ -285,10 +305,12 @@ static func _rocks(parent: Node2D) -> Array:
 		parent.add_child(body)
 		var visual: Polygon2D = null
 		if _decorate:
+			_drop(parent, circle_poly(pos, radius, 12), Vector2(0.1, 0.14))
 			visual = Polygon2D.new()
 			visual.polygon = circle_poly(pos, radius, 16)
-			visual.color = Color(0.45, 0.47, 0.52, 1)
+			visual.color = Color(0.38, 0.4, 0.46, 1)
 			parent.add_child(visual)
+			_poly(parent, circle_poly(pos + Vector2(-0.18, -0.16), radius * 0.42, 8), Color(0.72, 0.74, 0.78, 0.9))
 		rocks.append({"pos": pos, "r": radius, "hp": 48.0, "max": 48.0, "shape": col, "visual": visual})
 	return rocks
 
@@ -306,11 +328,13 @@ static func _keeps(parent: Node2D) -> Array:
 		var radius := 2.0 * 0.5
 		var visual: Polygon2D = null
 		if _decorate:
-			_poly(parent, circle_poly(pos + Vector2(0.06, 0.08), radius * 0.92, 12), Color(0.22, 0.32, 0.16, 0.35))
+			_drop(parent, _keep_poly(pos, radius), Vector2(0.08, 0.16))
+			_poly(parent, _keep_poly(pos + Vector2(0.0, 0.12), radius), Color(0.22, 0.16, 0.1, 1))
 			visual = Polygon2D.new()
 			visual.polygon = _keep_poly(pos, radius)
 			visual.color = Color(0.95, 0.9, 0.78, 1)
 			parent.add_child(visual)
+			_poly(parent, _keep_poly(pos + Vector2(-0.04, -0.08), radius * 0.55), Color(1, 1, 1, 0.22))
 			_keep_trim(parent, pos, radius, float(k["door"]))
 		keeps.append({
 			"id": k["id"], "pos": pos, "r": radius, "door": float(k["door"]),
@@ -333,11 +357,13 @@ static func _south_towers(parent: Node2D) -> Array:
 		var visual: Polygon2D = null
 		if _decorate:
 			_ring(parent, pos, cap_r, Color(1, 1, 1, 0.35))
-			_poly(parent, circle_poly(pos + Vector2(0.05, 0.08), radius * 0.9, 12), Color(0.22, 0.32, 0.16, 0.28))
+			_drop(parent, _keep_poly(pos, radius), Vector2(0.08, 0.14))
+			_poly(parent, _keep_poly(pos + Vector2(0.0, 0.1), radius), Color(0.22, 0.16, 0.1, 1))
 			visual = Polygon2D.new()
 			visual.polygon = _keep_poly(pos, radius)
 			visual.color = Color(0.95, 0.9, 0.78, 1)
 			parent.add_child(visual)
+			_poly(parent, _keep_poly(pos + Vector2(-0.04, -0.06), radius * 0.5), Color(1, 1, 1, 0.2))
 			_keep_trim(parent, pos, radius, -PI * 0.5)
 			_label(parent, pos + Vector2(0, -radius - 0.4), str(t["name"]), Color(0.1, 0.08, 0.16))
 		towers.append({
@@ -355,11 +381,13 @@ static func _outpost(parent: Node2D) -> Dictionary:
 	var visual: Polygon2D = null
 	if _decorate:
 		_ring(parent, pos, cap_r, Color(1, 0.85, 0.4, 0.45))
-		_poly(parent, circle_poly(pos + Vector2(0.05, 0.08), radius * 0.9, 12), Color(0.35, 0.24, 0.08, 0.28))
+		_drop(parent, _keep_poly(pos, radius), Vector2(0.08, 0.14))
+		_poly(parent, _keep_poly(pos + Vector2(0.0, 0.1), radius), Color(0.28, 0.18, 0.06, 1))
 		visual = Polygon2D.new()
 		visual.polygon = _keep_poly(pos, radius)
 		visual.color = Color(0.96, 0.84, 0.42, 1)
 		parent.add_child(visual)
+		_poly(parent, _keep_poly(pos + Vector2(-0.04, -0.06), radius * 0.5), Color(1, 0.95, 0.7, 0.28))
 		_keep_trim(parent, pos, radius, PI * 0.5)
 		_label(parent, pos + Vector2(0, -radius - 0.45), "MIDDLE OUTPOST", Color(0.1, 0.08, 0.16))
 	return {"name": "Middle Outpost", "pos": pos, "r": radius, "cap_r": cap_r, "progress": 0.0, "owner": -1, "visual": visual}
@@ -557,7 +585,7 @@ static func _tufts(parent: Node2D) -> void:
 		if y > 44.0:
 			continue
 		var radius := 0.12 + float(_mix(i * 13) % 16) / 100.0
-		var col := Color(0.4, 0.68, 0.16, 0.9) if (i % 3) != 0 else Color(0.78, 0.93, 0.42, 0.85)
+		var col := Color(0.28, 0.46, 0.14, 0.9) if (i % 3) != 0 else Color(0.62, 0.78, 0.32, 0.8)
 		_poly(parent, circle_poly(Vector2(x, y), radius, 5), col)
 
 
@@ -626,6 +654,13 @@ static func rect_poly(rect: Rect2) -> PackedVector2Array:
 		rect.position + rect.size,
 		rect.position + Vector2(0, rect.size.y)
 	])
+
+
+static func _drop(parent: Node, pts: PackedVector2Array, shift: Vector2) -> void:
+	var out := PackedVector2Array()
+	for p in pts:
+		out.append(p + shift)
+	_poly(parent, out, Color(0.03, 0.05, 0.02, 0.4))
 
 
 static func _poly(parent: Node, pts: PackedVector2Array, color: Color) -> Polygon2D:
