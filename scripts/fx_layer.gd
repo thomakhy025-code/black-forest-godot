@@ -1,6 +1,9 @@
 extends Node2D
-## Ground fire, shots, and skill shapes. One shared 8-point blob.
-## No per-flame buffer, particle, or extra canvas item.
+## Ground fire, shots, and skill shapes. Painted effects while something is
+## on screen. No per-flame buffer, particle, or extra canvas item.
+
+const Balance = preload("res://scripts/balance.gd")
+const ART := "res://assets/art/fighters/game/"
 
 var sim: Node = null
 var _font: Font
@@ -18,6 +21,7 @@ var _loop := PackedVector2Array([
 ])
 
 static var _circle := PackedVector2Array()
+var _art := {}
 
 
 func _ready() -> void:
@@ -28,6 +32,7 @@ func _ready() -> void:
 		for i in 8:
 			var a := TAU * float(i) / 8.0
 			_circle.append(Vector2(cos(a), sin(a)))
+	_load_art()
 
 
 func _process(_delta: float) -> void:
@@ -44,8 +49,10 @@ func _needs_draw() -> bool:
 		return true
 	if not sim.saber_fx.is_empty() or not sim.bursts.is_empty() or not sim.floats.is_empty():
 		return true
+	if not sim.skill_fx.is_empty():
+		return true
 	for u in sim.units:
-		if u.channel != null:
+		if u.channel != null or u.cast != null or int(u.net_skill) != 0:
 			return true
 	for k in sim.keeps:
 		if float(k["cap"]) > 0.0:
@@ -81,15 +88,17 @@ func _draw() -> void:
 		elif s.kind == "gem":
 			_gem(s.pos)
 	for u in sim.units:
-		if u.channel == null:
-			continue
-		if u.channel.kind == "mega":
-			_mega_zone(u.channel.pos, float(u.channel.r), 0.96 + 0.04 * sin(float(sim.time) * 8.0), 1.0)
-		elif u.channel.kind == "saber":
+		var skill := _live_skill(u)
+		if skill == "mega":
+			_mega_ring(u)
+		elif skill != "":
+			_prepare(u, skill)
+		elif u.channel != null and str(u.channel.kind) == "saber":
 			_saber(u.channel, Color(1.0, 0.92, 0.4, 0.34), Color(1.0, 0.86, 0.15, 0.95), Color(1.0, 1.0, 0.85, 0.95))
 	for fx in sim.mega_fx:
-		var k := 1.0 - float(fx.t) / float(fx.dur)
-		_mega_zone(fx.pos, float(fx.r) * (0.2 + 0.85 * k), 1.0, 1.0 - k)
+		_blast(fx)
+	for cast_fx in sim.skill_fx:
+		_strike(cast_fx)
 	for fx in sim.saber_fx:
 		var a2 := clampf(float(fx.t) / float(fx.dur), 0.0, 1.0)
 		_saber(fx, Color(1.0, 0.95, 0.7, 0.45 * a2), Color(1.0, 0.95, 0.55, 0.9 * a2), Color(1.0, 1.0, 0.9, 0.85 * a2))
@@ -127,10 +136,14 @@ func _fire(f) -> void:
 		return
 	var at: Vector2 = f.pos
 	var radius := float(f.r)
-	_blob(at, radius, Color(0.75, 0.16, 0.03, 0.55 * life))
-	var salt := int(absf(at.x * 17.0 + at.y * 9.0))
-	var side := 0.12 if ((int(life * 16.0) + salt) & 1) == 0 else -0.12
-	_blob(at + Vector2(side, -radius * 0.42), radius * 0.5, Color(1.0, 0.78, 0.22, 0.92 * life))
+	var tex: Texture2D = _art.get("ember-left")
+	if tex == null:
+		_blob(at, radius, Color(0.75, 0.16, 0.03, 0.55 * life))
+		var salt := int(absf(at.x * 17.0 + at.y * 9.0))
+		var side := 0.12 if ((int(life * 16.0) + salt) & 1) == 0 else -0.12
+		_blob(at + Vector2(side, -radius * 0.42), radius * 0.5, Color(1.0, 0.78, 0.22, 0.92 * life))
+		return
+	_paint(tex, at, Vector2(radius * 2.6, radius * 2.6), 0.0, life)
 
 
 func _fireball(s) -> void:
@@ -140,9 +153,13 @@ func _fireball(s) -> void:
 	var dir := Vector2.RIGHT
 	if speed > 0.001:
 		dir = vel / speed
-	_blob(at - dir * 0.42, 0.16, Color(1.0, 0.3, 0.04, 0.4))
-	_blob(at, 0.28, Color(1.0, 0.46, 0.08, 0.94))
-	_blob(at + dir * 0.1, 0.12, Color(1.0, 0.97, 0.76, 0.96))
+	var tex: Texture2D = _art.get("fireball-active")
+	if tex == null:
+		_blob(at - dir * 0.42, 0.16, Color(1.0, 0.3, 0.04, 0.4))
+		_blob(at, 0.28, Color(1.0, 0.46, 0.08, 0.94))
+		_blob(at + dir * 0.1, 0.12, Color(1.0, 0.97, 0.76, 0.96))
+		return
+	_paint(tex, at, Vector2(1.85, 1.15), dir.angle(), 1.0)
 
 
 func _gem(at: Vector2) -> void:
@@ -187,3 +204,108 @@ func _saber(ch, fill: Color, edge: Color, core: Color) -> void:
 	draw_polyline(_pent, edge, 0.14, true)
 	draw_line((_quad[0] + _quad[3]) * 0.5, (_quad[1] + _quad[2]) * 0.5, core, 0.12, true)
 	draw_line(_quad[1], _quad[2], Color(1.0, 1.0, 0.9, edge.a), 0.18, true)
+
+
+func _load_art() -> void:
+	for skill in ["ignite", "spark", "ember", "fireball", "ice", "mega"]:
+		for stage in ["prepare", "active", "left"]:
+			var key := "%s-%s" % [skill, stage]
+			var path := ART + "skill-%s.png" % key
+			if ResourceLoader.exists(path):
+				_art[key] = load(path)
+
+
+func _live_skill(u) -> String:
+	if u.cast != null:
+		return str(u.cast.name)
+	if u.channel != null and str(u.channel.kind) == "mega":
+		return "mega"
+	var id := int(u.net_skill)
+	if id > 0 and id < Balance.NET_SKILL_IDS.size():
+		return str(Balance.NET_SKILL_IDS[id])
+	return ""
+
+
+func _prepare(u, skill: String) -> void:
+	var fwd := Vector2(cos(u.facing), sin(u.facing))
+	var at: Vector2 = u.global_position
+	if skill == "ignite":
+		_paint(_art.get("ignite-prepare"), at + fwd * 0.8, Vector2(0.7, 0.7), 0.0, 0.95)
+	elif skill == "spark":
+		_paint(_art.get("spark-prepare"), at + fwd * 1.1, Vector2(0.85, 0.85), u.facing, 0.95)
+	elif skill == "ember":
+		_paint(_art.get("ember-prepare"), at, Vector2(1.15, 0.75), 0.0, 0.9)
+	elif skill == "fireball":
+		_paint(_art.get("fireball-prepare"), at + fwd * 0.75, Vector2(0.9, 0.75), 0.0, 0.95)
+	elif skill == "ice":
+		_paint(_art.get("ice-prepare"), at + fwd * 0.65, Vector2(0.95, 0.8), 0.0, 0.9)
+
+
+func _mega_ring(u) -> void:
+	var fwd := Vector2(cos(u.facing), sin(u.facing))
+	var pos: Vector2 = u.global_position + fwd * Balance.MEGA_AHEAD
+	var rad := Balance.MEGA_RADIUS
+	if u.channel != null:
+		pos = u.channel.pos
+		rad = float(u.channel.r)
+	var pulse := 0.82 + 0.18 * absf(sin(float(sim.time) * 6.0))
+	var tex: Texture2D = _art.get("mega-prepare")
+	if tex == null:
+		_mega_zone(pos, rad * pulse, 1.0, 0.9)
+		return
+	_paint(tex, pos, Vector2(rad * 2.0 * pulse, rad * 2.0 * pulse), 0.0, 0.94)
+
+
+func _blast(fx) -> void:
+	var dur := float(fx.dur) if float(fx.dur) > 0.0 else 1.7
+	var life := clampf(float(fx.t) / dur, 0.0, 1.0)
+	var rad := float(fx.r)
+	var at: Vector2 = fx.pos
+	var boom: Texture2D = _art.get("mega-active")
+	var crater: Texture2D = _art.get("mega-left")
+	if boom == null or crater == null:
+		var k := 1.0 - life
+		_mega_zone(at, rad * (0.2 + 0.85 * k), 1.0, life)
+		return
+	if life > 0.38:
+		_paint(boom, at, Vector2(rad * 2.15, rad * 2.35), 0.0, 1.0)
+	if life < 0.72:
+		var fade := 1.0 if life < 0.38 else (0.72 - life) / 0.34
+		_paint(crater, at, Vector2(rad * 1.55, rad * 1.55), 0.0, fade)
+
+
+func _strike(fx) -> void:
+	var dur := float(fx.dur) if float(fx.dur) > 0.0 else 0.64
+	var life := clampf(float(fx.t) / dur, 0.0, 1.0)
+	var kind := str(fx.kind)
+	var active := life > 0.42
+	var stage := "active" if active else "left"
+	var alpha := 1.0 if active else clampf(life / 0.42, 0.0, 1.0)
+	var ang := float(fx.ang)
+	var fwd := Vector2(cos(ang), sin(ang))
+	var at: Vector2 = fx.pos
+	var size := Vector2(1.3, 1.3)
+	var rot := 0.0
+	if kind == "ignite":
+		size = Vector2(2.3, 2.2)
+		rot = ang
+		at += fwd * 0.35
+	elif kind == "spark":
+		size = Vector2(4.0, 1.35) if active else Vector2(3.2, 0.55)
+		rot = ang
+		at += fwd * 2.0
+	elif kind == "ember":
+		size = Vector2(1.75, 1.3) if active else Vector2(1.45, 1.35)
+		rot = ang if active else 0.0
+		at += fwd * (0.75 if active else 0.45)
+	elif kind == "ice":
+		size = Vector2(1.7, 1.45) if active else Vector2(1.35, 1.15)
+	_paint(_art.get("%s-%s" % [kind, stage]), at, size, rot, alpha)
+
+
+func _paint(tex: Texture2D, at: Vector2, size: Vector2, ang: float, alpha: float) -> void:
+	if tex == null or alpha <= 0.02:
+		return
+	draw_set_transform(at, ang, Vector2.ONE)
+	draw_texture_rect(tex, Rect2(-size * 0.5, size), false, Color(1, 1, 1, alpha))
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)

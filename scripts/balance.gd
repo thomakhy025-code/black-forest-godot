@@ -66,6 +66,7 @@ const LAYER_ISLAND := 128
 const STAT_KEYS := ["atk", "spd", "hp", "cdr", "mp"]
 
 const SKILL_ORDER := ["ignite", "spark", "ember", "fireball", "ice", "mega"]
+const NET_SKILL_IDS := ["", "ignite", "spark", "ember", "fireball", "ice", "mega"]
 
 const WEAPON_KITS := {
 	"none": [],

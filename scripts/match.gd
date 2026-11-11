@@ -44,12 +44,14 @@ var shots: Array = []
 var floats: Array = []
 var bursts: Array = []
 var mega_fx: Array = []
+var skill_fx: Array = []
 var saber_fx: Array = []
 var kill_call = null
 var result = null
 var last_data: Dictionary = {}
 var _clone_seq := 1
 var _steer := {}
+var _blast_seen := {}
 var _block_shape := CircleShape2D.new()
 var _block_query := PhysicsShapeQueryParameters2D.new()
 var _ray := PhysicsRayQueryParameters2D.new()
@@ -119,7 +121,9 @@ func start_match(data: Dictionary, record_results: bool = true, show_help: bool 
 	floats.clear()
 	bursts.clear()
 	mega_fx.clear()
+	skill_fx.clear()
 	saber_fx.clear()
+	_blast_seen.clear()
 	_steer.clear()
 	for child in unit_root.get_children():
 		child.free()
@@ -268,6 +272,12 @@ func tick(dt: float) -> void:
 		if clock <= 0.0:
 			end_match("draw")
 	shake = maxf(0.0, shake - dt * 1.8)
+	var next_mega: Array = []
+	for fx in mega_fx:
+		fx.t = float(fx.t) - dt
+		if float(fx.t) > 0.0:
+			next_mega.append(fx)
+	mega_fx = next_mega
 	if headless_server:
 		return
 	_tick_fx(dt)
@@ -758,14 +768,13 @@ func detonate_mega(u, ch) -> void:
 			continue
 		try_hit(o, Balance.MEGA_DAMAGE, u, Color(1, 0.35, 0.35))
 	burst(ch.pos, Color(1, 0.69, 0.63), 18, 4.0)
-	if not headless_server:
-		var fx := State.new()
-		fx.pos = ch.pos
-		fx.t = 1.7
-		fx.dur = 1.7
-		fx.r = ch.r
-		mega_fx.append(fx)
-	shake = 1.35
+	var fx := State.new()
+	fx.pos = ch.pos
+	fx.t = 1.7
+	fx.dur = 1.7
+	fx.r = ch.r
+	mega_fx.append(fx)
+	shake = 2.6
 	_sfx("mega")
 
 
@@ -805,6 +814,7 @@ func finish_cast(u) -> void:
 	u.has_cast_face = false
 	if u.carrying != null or u.dead:
 		return
+	_spawn_skill_fx(u, skill_name)
 	if skill_name == "fireball":
 		spawn_fireball(u)
 	elif skill_name == "ice":
@@ -1636,12 +1646,12 @@ func _tick_fx(dt: float) -> void:
 		if p.t > 0.0:
 			next_bursts.append(p)
 	bursts = next_bursts
-	var next_mega: Array = []
-	for fx in mega_fx:
-		fx.t -= dt
-		if fx.t > 0.0:
-			next_mega.append(fx)
-	mega_fx = next_mega
+	var next_skill: Array = []
+	for cast_fx in skill_fx:
+		cast_fx.t = float(cast_fx.t) - dt
+		if float(cast_fx.t) > 0.0:
+			next_skill.append(cast_fx)
+	skill_fx = next_skill
 	var next_saber: Array = []
 	for fx2 in saber_fx:
 		fx2.t -= dt
@@ -1770,7 +1780,9 @@ func start_online_match(crimson: Dictionary, azure: Dictionary, crimson_peer: in
 	floats.clear()
 	bursts.clear()
 	mega_fx.clear()
+	skill_fx.clear()
 	saber_fx.clear()
+	_blast_seen.clear()
 	_steer.clear()
 	for child in unit_root.get_children():
 		child.free()
@@ -1923,6 +1935,7 @@ func pack_net_bytes(ack: Dictionary) -> PackedByteArray:
 		buf.put_float(u.mp)
 		buf.put_u8(flags)
 		buf.put_u8(_net_pose(u))
+		buf.put_u8(_net_skill(u))
 	buf.put_u8(mini(ack.size(), 8))
 	var ack_n := 0
 	for key in ack.keys():
@@ -1965,6 +1978,7 @@ func pack_net_bytes(ack: Dictionary) -> PackedByteArray:
 	_pack_fires(buf)
 	_pack_cooldowns(buf)
 	_pack_doors(buf)
+	_pack_blasts(buf)
 	var kill_bytes := PackedByteArray()
 	if kill_call != null:
 		kill_bytes = str(kill_call.get("text", "")).to_utf8_buffer()
@@ -2024,7 +2038,8 @@ func _decode_net_bytes(raw: PackedByteArray) -> Dictionary:
 		var mp := buf.get_float()
 		var flags := buf.get_u8()
 		var pose := buf.get_u8()
-		unit_rows.append([units[i].unit_id, x, y, facing, hp, mp, flags, pose])
+		var skill := buf.get_u8()
+		unit_rows.append([units[i].unit_id, x, y, facing, hp, mp, flags, pose, skill])
 	var ack := {}
 	var ack_n := buf.get_u8()
 	for _i in ack_n:
@@ -2058,6 +2073,7 @@ func _decode_net_bytes(raw: PackedByteArray) -> Dictionary:
 	var fire_rows := _read_fires(buf)
 	var cd_rows := _read_cooldowns(buf)
 	var door_rows := _read_doors(buf)
+	var blast_rows := _read_blasts(buf)
 	var kill_n := buf.get_u8()
 	var kill_text := ""
 	if kill_n > 0:
@@ -2094,6 +2110,7 @@ func _decode_net_bytes(raw: PackedByteArray) -> Dictionary:
 		"fires": fire_rows,
 		"cds": cd_rows,
 		"doors": door_rows,
+		"blasts": blast_rows,
 		"kill": kill_text,
 		"result_type": result_type,
 		"result_team": -1 if result_team_b == 255 else int(result_team_b)
@@ -2115,6 +2132,94 @@ func _net_pose(u) -> int:
 	if u.wish.length_squared() > 0.0:
 		return 1
 	return 0
+
+
+func _net_skill(u) -> int:
+	if u.channel != null and str(u.channel.kind) == "mega":
+		return 6
+	if u.cast == null:
+		return 0
+	var found := Balance.NET_SKILL_IDS.find(str(u.cast.name))
+	return found if found > 0 else 0
+
+
+func _spawn_skill_fx(u, skill_name: String) -> void:
+	_spawn_skill_fx_at(skill_name, u.global_position, u.facing)
+
+
+func _spawn_skill_fx_at(skill_name: String, pos: Vector2, ang: float) -> void:
+	if headless_server:
+		return
+	if skill_name != "ignite" and skill_name != "spark" and skill_name != "ember" and skill_name != "ice":
+		return
+	var fx := State.new()
+	fx.kind = skill_name
+	fx.pos = pos
+	fx.ang = ang
+	fx.t = 0.64
+	fx.dur = 0.64
+	skill_fx.append(fx)
+	if skill_fx.size() > 16:
+		skill_fx = skill_fx.slice(skill_fx.size() - 16)
+
+
+func _note_remote_skill(u, skill: int, pos: Vector2, facing: float) -> void:
+	var prev := int(u.net_skill)
+	u.net_skill = skill
+	if net_role != "client" or prev == 0 or skill != 0:
+		return
+	if prev < 0 or prev >= Balance.NET_SKILL_IDS.size():
+		return
+	_spawn_skill_fx_at(str(Balance.NET_SKILL_IDS[prev]), pos, facing)
+
+
+func _pack_blasts(buf: StreamPeerBuffer) -> void:
+	var n := mini(mega_fx.size(), 2)
+	buf.put_u8(n)
+	var sent := 0
+	for fx in mega_fx:
+		if sent >= n:
+			break
+		buf.put_float(fx.pos.x)
+		buf.put_float(fx.pos.y)
+		buf.put_float(float(fx.r))
+		buf.put_float(float(fx.t))
+		sent += 1
+
+
+func _read_blasts(buf: StreamPeerBuffer) -> Array:
+	var rows: Array = []
+	var n := buf.get_u8()
+	for _i in n:
+		rows.append([buf.get_float(), buf.get_float(), buf.get_float(), buf.get_float()])
+	return rows
+
+
+func _apply_net_blasts(rows: Array) -> void:
+	var keep := {}
+	var next: Array = []
+	for row in rows:
+		if typeof(row) != TYPE_ARRAY or row.size() < 4:
+			continue
+		var pos := Vector2(float(row[0]), float(row[1]))
+		var key := "%d:%d" % [int(round(pos.x)), int(round(pos.y))]
+		keep[key] = true
+		if not _blast_seen.has(key):
+			_blast_seen[key] = true
+			shake = maxf(shake, 2.6)
+		var fx := State.new()
+		fx.pos = pos
+		fx.r = float(row[2])
+		fx.t = float(row[3])
+		fx.dur = 1.7
+		next.append(fx)
+	mega_fx = next
+	var drop: Array = []
+	for key in _blast_seen.keys():
+		if not keep.has(key):
+			drop.append(key)
+	for key in drop:
+		_blast_seen.erase(key)
 
 
 func apply_net_snapshot(blob: Dictionary) -> void:
@@ -2139,6 +2244,8 @@ func apply_net_snapshot(blob: Dictionary) -> void:
 		var flags := int(row[6])
 		var pose := int(row[7])
 		u.net_pose = pose
+		var skill := int(row[8]) if row.size() > 8 else 0
+		_note_remote_skill(u, skill, pos, facing)
 		var now_dead := (flags & 1) != 0
 		if now_dead:
 			u.dead = true
@@ -2176,6 +2283,7 @@ func apply_net_snapshot(blob: Dictionary) -> void:
 	_apply_net_fires(blob.get("fires", []))
 	_apply_net_cds(blob.get("cds", []))
 	_apply_net_doors(blob.get("doors", []))
+	_apply_net_blasts(blob.get("blasts", []))
 	var kill_text := str(blob.get("kill", ""))
 	if kill_text != "":
 		if kill_call == null or str(kill_call.get("text", "")) != kill_text:
@@ -2421,5 +2529,16 @@ func present_online(dt: float) -> void:
 			d.pos = d.carrier.global_position + Vector2(0, -0.2)
 	_tick_fx(dt)
 	_sync_diamonds()
-	if player and is_instance_valid(player):
+	var next_mega: Array = []
+	for fx in mega_fx:
+		fx.t = float(fx.t) - dt
+		if float(fx.t) > 0.0:
+			next_mega.append(fx)
+	mega_fx = next_mega
+	shake = maxf(0.0, shake - dt * 1.8)
+	if player and is_instance_valid(player) and camera:
 		camera.global_position = camera.global_position.lerp(player.global_position, minf(1.0, dt * 6.0))
+		if shake > 0.0:
+			camera.offset = Vector2(randf_range(-1.0, 1.0), randf_range(-1.0, 1.0)) * shake * 0.25
+		else:
+			camera.offset = Vector2.ZERO

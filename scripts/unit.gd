@@ -15,6 +15,7 @@ var is_remote := false
 var net_controlled := false
 var peer_id := 0
 var net_pose := 0
+var net_skill := 0
 var role := "fight"
 var radius := 0.48
 var facing := 0.0
