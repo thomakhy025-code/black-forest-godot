@@ -91,6 +91,20 @@ func _ready() -> void:
 	var job_kind := str(job_a.get("kind", ""))
 	_check("gather before the diamond", job_kind == "node" or job_kind == "pile" or job_kind == "forge")
 	_check("job stays put", job_pos.distance_to(job_b.get("pos", Vector2.ZERO)) < 0.25)
+	var nia_job: Dictionary = match_node.bot_goal(nia)
+	if job_kind == "node" and str(nia_job.get("kind", "")) == "node":
+		_check("separate trees", nia_job.get("ref") != job_a.get("ref"))
+	var holt = null
+	for unit in match_node.units:
+		if str(unit.unit_id) == "holt":
+			holt = unit
+	var holt_at: Vector2 = holt.global_position
+	holt.global_position = joss.global_position + Vector2(1.5, 0)
+	holt.force_update_transform()
+	var job_c: Dictionary = match_node.bot_goal(joss)
+	_check("gather through a nearby enemy", job_pos.distance_to(job_c.get("pos", Vector2.ZERO)) < 0.25)
+	holt.global_position = holt_at
+	holt.force_update_transform()
 	if job_kind == "node":
 		var stand: Vector2 = match_node.stand_point(joss, job_pos)
 		_check("stands off the trunk", stand.distance_to(job_pos) > 0.45)
@@ -139,11 +153,6 @@ func _ready() -> void:
 	player.wood = 0
 	player.hide = 0
 	player.fiber = 0
-	var holt = null
-	for u in match_node.units:
-		if str(u.unit_id) == "holt":
-			holt = u
-			break
 	var player_pos: Vector2 = player.global_position
 	var holt_pos: Vector2 = holt.global_position
 	var holt_hp: float = holt.hp

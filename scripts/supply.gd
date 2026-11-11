@@ -294,7 +294,7 @@ static func _open_machine(match_node, u):
 static func bot_act(match_node, u) -> void:
 	if u.dead or u.carrying != null or u.channel != null or u.cast != null:
 		return
-	if match_node.nearest_enemy(u, 2.5) != null:
+	if machines_ready(match_node, int(u.team)) and match_node.nearest_enemy(u, 2.5) != null:
 		return
 	if u.attack_cd <= 0.0:
 		var shape: Dictionary = u.swing_shape()
