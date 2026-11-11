@@ -106,6 +106,10 @@ static func on_respawn(u) -> void:
 	u.hide = 0
 	u.fiber = 0
 	u.equip_weapon("none", false)
+	u.bot_lock = null
+	u.bot_stuck = false
+	u.bot_corner = ""
+	u.bot_mark_t = 0.0
 
 
 static func take_drop(match_node, u, drop) -> void:
@@ -191,26 +195,100 @@ static func use_door(match_node, u, door) -> void:
 	match_node.float_at(u.global_position + Vector2(0, -0.9), "REPAIR", Color(1, 0.88, 0.54))
 
 
+static func machines_ready(match_node, team: int) -> bool:
+	var sword = _forge_for(match_node, team, "sword")
+	var wand = _forge_for(match_node, team, "wand")
+	if sword == null or wand == null:
+		return false
+	return bool(sword.get("built", false)) and bool(wand.get("built", false))
+
+
 static func bot_goal(match_node, u) -> Dictionary:
 	if u.dead or u.carrying != null:
 		return {}
-	var want := _wanted(u)
+	if not machines_ready(match_node, int(u.team)):
+		return _team_supply(match_node, u)
 	if str(u.weapon) == "none":
 		var drop = _nearest_drop(match_node, u.global_position, 18.0)
 		if drop != null:
-			return {"pos": drop["pos"], "unit": null}
-	var own = _forge_for(match_node, int(u.team), want)
-	var foe = _forge_for(match_node, 1 - int(u.team), want)
+			return {"pos": drop["pos"], "unit": null, "kind": "drop", "ref": drop}
+	var own = _forge_for(match_node, int(u.team), _wanted(u))
+	var foe = _forge_for(match_node, 1 - int(u.team), _wanted(u))
 	if str(u.weapon) == "none" and own != null:
 		var own_d: float = u.global_position.distance_to(own["pos"])
 		if foe != null and bool(foe.get("built", false)):
 			var foe_d: float = u.global_position.distance_to(foe["pos"])
 			if foe_d + 0.5 < own_d:
-				return {"pos": foe["pos"], "unit": null}
+				return {"pos": foe["pos"], "unit": null, "kind": "forge", "ref": foe}
 		if bool(own.get("built", false)):
-			return {"pos": own["pos"], "unit": null}
+			return {"pos": own["pos"], "unit": null, "kind": "forge", "ref": own}
 		return _carry_job(match_node, u, own)
 	return _door_job(match_node, u)
+
+
+static func lock_ok(match_node, u, lock: Dictionary) -> bool:
+	var kind := str(lock.get("kind", ""))
+	var ref = lock.get("ref")
+	if kind == "node":
+		if ref == null or float(ref.get("hp", 0.0)) <= 0.0:
+			return false
+		if not _wants_item(match_node, u, str(ref.get("item", ""))):
+			return false
+		lock["pos"] = ref["pos"]
+		return true
+	if kind == "pile":
+		if not match_node.piles.has(ref):
+			return false
+		if int(ref.get("wood", 0)) + int(ref.get("hide", 0)) + int(ref.get("fiber", 0)) <= 0:
+			return false
+		lock["pos"] = ref["pos"]
+		return true
+	if kind == "forge":
+		if ref == null:
+			return false
+		if bool(ref.get("built", false)):
+			if str(u.weapon) != "none" or not machines_ready(match_node, int(u.team)):
+				return false
+		lock["pos"] = ref["pos"]
+		return true
+	if kind == "door":
+		if ref == null:
+			return false
+		var hp := float(ref.get("hp", 0.0))
+		var mx := float(ref.get("max", 1.0))
+		if hp >= mx and hp > 0.0:
+			return false
+		var rect: Rect2 = ref["rect"]
+		lock["pos"] = rect.get_center()
+		return true
+	if kind == "drop":
+		if not match_node.weapon_drops.has(ref):
+			return false
+		lock["pos"] = ref["pos"]
+		return true
+	return false
+
+
+static func _team_supply(match_node, u) -> Dictionary:
+	var forge = _open_machine(match_node, u)
+	if forge == null:
+		return {}
+	return _carry_job(match_node, u, forge)
+
+
+static func _open_machine(match_node, u):
+	var first := "sword"
+	var second := "wand"
+	if _wanted(u) == "wand":
+		first = "wand"
+		second = "sword"
+	var forge = _forge_for(match_node, int(u.team), first)
+	if forge != null and not bool(forge.get("built", false)):
+		return forge
+	var other = _forge_for(match_node, int(u.team), second)
+	if other != null and not bool(other.get("built", false)):
+		return other
+	return null
 
 
 static func bot_act(match_node, u) -> void:
@@ -509,8 +587,8 @@ static func _carry_job(match_node, u, forge) -> Dictionary:
 		if int(need[key]) > int(u.get(key)):
 			missing.append(key)
 	if useful or missing.is_empty():
-		return {"pos": forge["pos"], "unit": null}
-	return _fetch(match_node, u.global_position, missing, forge["pos"])
+		return {"pos": forge["pos"], "unit": null, "kind": "forge", "ref": forge}
+	return _fetch(match_node, u, missing, forge["pos"])
 
 
 static func _door_job(match_node, u) -> Dictionary:
@@ -536,36 +614,53 @@ static func _door_job(match_node, u) -> Dictionary:
 		var need_wood := int(door.get("wood", 0)) < 3
 		var need_fiber := int(door.get("fiber", 0)) < 1
 		if (need_wood and int(u.wood) > 0) or (need_fiber and int(u.fiber) > 0):
-			return {"pos": center2, "unit": null}
+			return {"pos": center2, "unit": null, "kind": "door", "ref": door}
 		var missing: Array = []
 		if need_wood and int(u.wood) < 3:
 			missing.append("wood")
 		if need_fiber and int(u.fiber) < 1:
 			missing.append("fiber")
 		if missing.is_empty():
-			return {"pos": center2, "unit": null}
-		var job := _fetch(match_node, origin, missing, center2)
+			return {"pos": center2, "unit": null, "kind": "door", "ref": door}
+		var job := _fetch(match_node, u, missing, center2)
 		if job.is_empty():
 			return {}
 		return job
 	if int(u.wood) > 0:
-		return {"pos": center2, "unit": null}
-	var tree = _nearest_node(match_node, origin, ["wood"])
+		return {"pos": center2, "unit": null, "kind": "door", "ref": door}
+	var tree = _nearest_node(match_node, origin, ["wood"], _taken_nodes(match_node, u))
+	if tree == null:
+		tree = _nearest_node(match_node, origin, ["wood"], [])
 	if tree != null:
-		return {"pos": tree["pos"], "unit": null}
+		return {"pos": tree["pos"], "unit": null, "kind": "node", "ref": tree}
 	return {}
 
 
-static func _fetch(match_node, origin: Vector2, missing: Array, fallback: Vector2) -> Dictionary:
+static func _fetch(match_node, u, missing: Array, fallback: Vector2) -> Dictionary:
+	var origin: Vector2 = u.global_position
+	var skip: Array = _taken_nodes(match_node, u)
 	var pile = _nearest_pile(match_node, origin, missing, 18.0)
-	var node = _nearest_node(match_node, origin, missing)
+	var node = _nearest_node(match_node, origin, missing, skip)
+	if node == null and not skip.is_empty():
+		node = _nearest_node(match_node, origin, missing, [])
 	if pile != null and (node == null or origin.distance_to(pile["pos"]) <= origin.distance_to(node["pos"])):
-		return {"pos": pile["pos"], "unit": null}
+		return {"pos": pile["pos"], "unit": null, "kind": "pile", "ref": pile}
 	if node != null:
-		return {"pos": node["pos"], "unit": null}
+		return {"pos": node["pos"], "unit": null, "kind": "node", "ref": node}
 	if missing.is_empty():
-		return {"pos": fallback, "unit": null}
+		return {"pos": fallback, "unit": null, "kind": "move"}
 	return {}
+
+
+static func _taken_nodes(match_node, u) -> Array:
+	var out: Array = []
+	for other in match_node.units:
+		if other == u or int(other.team) != int(u.team) or other.dead:
+			continue
+		var lock = other.bot_lock
+		if lock is Dictionary and str(lock.get("kind", "")) == "node" and lock.get("ref") != null:
+			out.append(lock.get("ref"))
+	return out
 
 
 static func _useful(match_node, u) -> bool:
@@ -617,11 +712,15 @@ static func _pile_useful(match_node, u, reach: float) -> bool:
 static func _wants_item(match_node, u, item: String) -> bool:
 	if int(u.get(item)) >= Balance.BAG_CAP:
 		return false
-	var forge = _forge_for(match_node, int(u.team), _wanted(u))
-	if forge != null and not bool(forge.get("built", false)):
+	for machine in ["sword", "wand"]:
+		var forge = _forge_for(match_node, int(u.team), machine)
+		if forge == null or bool(forge.get("built", false)):
+			continue
 		var need := _remaining(forge)
 		if int(need.get(item, 0)) > int(u.get(item)):
 			return true
+	if not machines_ready(match_node, int(u.team)):
+		return false
 	for w in match_node.walls:
 		if str(w.get("kind", "")) != "door" or int(w.get("team", -1)) != int(u.team):
 			continue
@@ -660,13 +759,15 @@ static func _forge_for(match_node, team: int, kind: String):
 	return null
 
 
-static func _nearest_node(match_node, origin: Vector2, items: Array):
+static func _nearest_node(match_node, origin: Vector2, items: Array, skip: Array):
 	var best = null
 	var bd := 100000000.0
 	for n in match_node.nodes:
 		if float(n.get("hp", 0.0)) <= 0.0:
 			continue
 		if not items.has(str(n.get("item", ""))):
+			continue
+		if skip.has(n):
 			continue
 		var pos: Vector2 = n["pos"]
 		var dist := origin.distance_squared_to(pos)

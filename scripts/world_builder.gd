@@ -782,12 +782,22 @@ static func _mountains(parent: Node2D) -> void:
 
 static func _wild(parent: Node2D) -> Array:
 	var spots: Array = []
-	for grove in _grove_spots():
-		var at: Vector2 = grove
-		spots.append(["tree", at.x, at.y])
+	var grove: Array = _grove_spots()
+	for at in grove:
+		var tree_at: Vector2 = at
+		spots.append(["tree", tree_at.x, tree_at.y])
+	for wild_item in [Vector2(18, 8), Vector2(70, 8), Vector2(18, 42), Vector2(70, 42), Vector2(34, 8), Vector2(54, 8), Vector2(34, 42), Vector2(54, 42)]:
+		var wild: Vector2 = wild_item
+		var crowded := false
+		for grove_item in grove:
+			var grove_at: Vector2 = grove_item
+			if wild.distance_to(grove_at) < 2.2:
+				crowded = true
+				break
+		if crowded:
+			continue
+		spots.append(["tree", wild.x, wild.y])
 	spots.append_array([
-		["tree", 18.0, 8.0], ["tree", 70.0, 8.0], ["tree", 18.0, 42.0], ["tree", 70.0, 42.0],
-		["tree", 34.0, 8.0], ["tree", 54.0, 8.0], ["tree", 34.0, 42.0], ["tree", 54.0, 42.0],
 		["plant", 20.0, 10.0], ["plant", 68.0, 10.0], ["plant", 20.0, 40.0], ["plant", 68.0, 40.0],
 		["plant", 36.0, 12.0], ["plant", 52.0, 38.0],
 		["animal", 16.0, 10.0], ["animal", 72.0, 10.0], ["animal", 16.0, 40.0], ["animal", 72.0, 40.0],

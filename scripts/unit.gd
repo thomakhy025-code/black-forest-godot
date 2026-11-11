@@ -59,6 +59,13 @@ var guard := false
 var guard_block := false
 var wish := Vector2.ZERO
 var click_target = null
+var bot_lock = null
+var bot_stuck := false
+var bot_slide := 1.0
+var bot_slide_wait := 0.0
+var bot_corner := ""
+var bot_mark := Vector2.ZERO
+var bot_mark_t := 0.0
 var warp_cd := 0.0
 var move_blend := 0.0
 var cast_face := 0.0
@@ -304,16 +311,20 @@ func predict_move(dt: float) -> void:
 	if shock > 0.0:
 		wish = Vector2.ZERO
 		click_target = null
+	bot_slide_wait = maxf(0.0, bot_slide_wait - dt)
 	var sp := move_speed() * dt
 	if sp > 0.0 and wish.length_squared() > 0.0:
 		var before2 := global_position
 		try_step(wish.x * sp, wish.y * sp)
 		if global_position.distance_to(before2) < sp * 0.25:
-			var base: float = wish.angle()
-			for off in [0.7, -0.7, 1.3, -1.3]:
-				try_step(cos(base + off) * sp, sin(base + off) * sp)
-				if global_position.distance_to(before2) > sp * 0.25:
-					break
+			if is_player or net_controlled:
+				var base: float = wish.angle()
+				for off in [0.7, -0.7, 1.3, -1.3]:
+					try_step(cos(base + off) * sp, sin(base + off) * sp)
+					if global_position.distance_to(before2) > sp * 0.25:
+						break
+			else:
+				_bot_slide(sp, before2)
 		if global_position.distance_to(before2) > 0.004:
 			move_blend = minf(1.0, move_blend + dt / 0.18)
 
@@ -350,10 +361,12 @@ func read_player() -> void:
 		facing = wish.angle()
 
 
-func tick_bot(_dt: float) -> void:
-	var foe = null if carrying != null else sim.nearest_enemy(self, 2.1)
+func tick_bot(dt: float) -> void:
+	_note_stuck(dt)
+	var gathering: bool = not sim.team_ready(team)
+	var foe = null if carrying != null or gathering else sim.nearest_enemy(self, 2.1)
 	var door = null if carrying != null else sim.enemy_door(self)
-	if carrying == null and cast == null and dash == null:
+	if not gathering and carrying == null and cast == null and dash == null:
 		var acted := false
 		if skills.get("fireball", false) and float(cds.get("fireball", 0.0)) <= 0.0 and foe == null:
 			var shot = sim.nearest_enemy(self, 12.0)
@@ -375,10 +388,10 @@ func tick_bot(_dt: float) -> void:
 			try_swing()
 		elif not acted and door != null and attack_cd <= 0.0:
 			try_swing()
-	if role == "defend":
+	if role == "defend" and not gathering:
 		sim.maybe_repair(self)
 	sim.bot_supply(self)
-	if warp_cd <= 0.0:
+	if warp_cd <= 0.0 and not gathering:
 		sim.bot_use_map(self)
 	var goal: Dictionary = sim.bot_goal(self)
 	var goal_pos: Vector2 = goal["pos"]
@@ -388,10 +401,12 @@ func tick_bot(_dt: float) -> void:
 		if away.length() < 1.7:
 			var n := away.normalized() if away.length() > 0.05 else Vector2(cos(float(unit_id.length())), sin(float(unit_id.length())))
 			goal_pos = goal_unit.global_position + n * 1.7
-	var wp: Vector2 = sim.steer_point(self, goal_pos)
+	var stand: Vector2 = sim.stand_point(self, goal_pos)
+	var wp: Vector2 = sim.steer_point(self, stand)
 	var delta := wp - global_position
 	var length := delta.length()
-	if length < 0.6 and role == "defend" and sim.nearest_enemy(self, 9.0) == null:
+	var gathering_goal := str(goal.get("kind", "")) == "node" or str(goal.get("kind", "")) == "pile" or str(goal.get("kind", "")) == "forge" or str(goal.get("kind", "")) == "door" or str(goal.get("kind", "")) == "drop"
+	if length < 0.6 and role == "defend" and not gathering_goal and sim.nearest_enemy(self, 9.0) == null:
 		wish = Vector2.ZERO
 	elif length > 0.001:
 		wish = delta / length
@@ -401,6 +416,39 @@ func tick_bot(_dt: float) -> void:
 		facing = cast_face
 	elif wish != Vector2.ZERO:
 		facing = wish.angle()
+
+
+func _note_stuck(dt: float) -> void:
+	if bot_mark_t <= 0.0:
+		bot_mark = global_position
+		bot_mark_t = 0.4
+		return
+	bot_mark_t -= dt
+	if bot_mark_t > 0.0:
+		return
+	var moved := global_position.distance_to(bot_mark)
+	var walking := wish.length_squared() > 0.2
+	bot_mark = global_position
+	bot_mark_t = 0.4
+	if walking and moved < 0.1:
+		bot_stuck = true
+		bot_lock = null
+
+
+func _bot_slide(sp: float, before: Vector2) -> void:
+	if bot_slide_wait > 0.0:
+		return
+	var side := 1.0 if bot_slide >= 0.0 else -1.0
+	var tangent := Vector2(-wish.y, wish.x) * side
+	try_step(tangent.x * sp, tangent.y * sp)
+	if global_position.distance_to(before) >= sp * 0.25:
+		return
+	side = -side
+	bot_slide = side
+	tangent = Vector2(-wish.y, wish.x) * side
+	try_step(tangent.x * sp, tangent.y * sp)
+	if global_position.distance_to(before) < sp * 0.25:
+		bot_slide_wait = 0.3
 
 
 func move_speed() -> float:

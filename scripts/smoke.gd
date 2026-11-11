@@ -65,7 +65,7 @@ func _ready() -> void:
 			animals += 1
 	_check("6 animals", animals == 6)
 	var node_count: int = match_node.nodes.size()
-	_check("wild nodes %d" % node_count, node_count == 35)
+	_check("wild nodes %d" % node_count, node_count == 33)
 	var castle_trees := 0
 	var west_yard := Rect2(4.2, 14.0, 17.0, 23.5)
 	var east_yard := Rect2(66.8, 14.0, 17.2, 23.5)
@@ -81,6 +81,32 @@ func _ready() -> void:
 		if str(unit.unit_id) == "nia":
 			nia = unit
 	_check("bot leaves the yard", nia != null and match_node.steer_point(nia, Vector2(18, 8)).x > 21.0)
+	var joss = null
+	for unit in match_node.units:
+		if str(unit.unit_id) == "joss":
+			joss = unit
+	var job_a: Dictionary = match_node.bot_goal(joss)
+	var job_b: Dictionary = match_node.bot_goal(joss)
+	var job_pos: Vector2 = job_a.get("pos", Vector2.ZERO)
+	var job_kind := str(job_a.get("kind", ""))
+	_check("gather before the diamond", job_kind == "node" or job_kind == "pile" or job_kind == "forge")
+	_check("job stays put", job_pos.distance_to(job_b.get("pos", Vector2.ZERO)) < 0.25)
+	if job_kind == "node":
+		var stand: Vector2 = match_node.stand_point(joss, job_pos)
+		_check("stands off the trunk", stand.distance_to(job_pos) > 0.45)
+	var saved: Vector2 = nia.global_position
+	nia.global_position = Vector2(10, 15.1)
+	nia.force_update_transform()
+	nia.wish = Vector2(0, -1)
+	nia.bot_slide = 1.0
+	nia.bot_slide_wait = 0.0
+	var x0: float = nia.global_position.x
+	for _slide in 12:
+		nia.predict_move(0.05)
+	_check("bot slides along the wall", absf(nia.global_position.x - x0) > 0.2 and nia.global_position.y > 14.6)
+	nia.global_position = saved
+	nia.wish = Vector2.ZERO
+	nia.force_update_transform()
 	_check("dash 4m", absf(Balance.DASH_DIST - 4.0) < 0.001)
 	_check("river water", match_node.in_water(Vector2(25, 25.5)))
 	_check("pond water", match_node.in_water(Vector2(44, 18)))
