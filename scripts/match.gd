@@ -653,7 +653,7 @@ func _walk_clear(u, goal: Vector2) -> bool:
 func _segment_clear(origin: Vector2, goal: Vector2, radius: float, team: int) -> bool:
 	if origin.distance_squared_to(goal) < 0.01:
 		return true
-	if _cuts_wall(origin, goal, radius):
+	if _cuts_wall(origin, goal, radius, team):
 		return false
 	if not los(origin, goal, team):
 		return false
@@ -664,14 +664,22 @@ func _segment_clear(origin: Vector2, goal: Vector2, radius: float, team: int) ->
 	return true
 
 
-func _cuts_wall(a: Vector2, b: Vector2, radius: float) -> bool:
+func _cuts_wall(a: Vector2, b: Vector2, radius: float, team: int) -> bool:
 	for w in walls:
-		if str(w.get("kind", "")) == "door" and float(w.get("hp", 0.0)) <= 0.0:
+		if _door_passable(w, team):
 			continue
 		var rect: Rect2 = w["rect"]
 		if _cuts_rect(a, b, rect.grow(radius)):
 			return true
 	return false
+
+
+func _door_passable(w, team: int) -> bool:
+	if str(w.get("kind", "")) != "door":
+		return false
+	if float(w.get("hp", 0.0)) <= 0.0:
+		return true
+	return int(w.get("team", -1)) == team
 
 
 func _cuts_rect(a: Vector2, b: Vector2, rect: Rect2) -> bool:
@@ -794,7 +802,7 @@ func crowd_slot(u, wp: Vector2) -> Vector2:
 	var beside: Vector2 = wp + Vector2(cos(ang), sin(ang)) * 1.1
 	if blocked_circle(beside, float(u.radius), int(u.team)):
 		return wp
-	if _cuts_wall(origin, beside, float(u.radius)):
+	if _cuts_wall(origin, beside, float(u.radius), int(u.team)):
 		return wp
 	return beside
 
@@ -847,23 +855,32 @@ func team_ready(team_id: int) -> bool:
 	return Supply.base_ready(self, team_id)
 
 
+func bot_order(u) -> String:
+	# One job at a time. The host runs this for online robots too.
+	if u.carrying != null:
+		return "home"
+	if not Supply.machines_ready(self, int(u.team)):
+		return "supply"
+	if not Supply.gates_ready(self, int(u.team)):
+		return "door"
+	if str(u.weapon) == "none":
+		return "arm"
+	return "fight"
+
+
 func bot_goal(u) -> Dictionary:
 	return _hold_job(u, _fresh_bot_goal(u))
 
 
 func _fresh_bot_goal(u) -> Dictionary:
-	if u.carrying != null:
+	var order := bot_order(u)
+	if order == "home":
 		return {"pos": vaults[u.team]["pos"], "unit": null, "kind": "move"}
-	var ready: bool = Supply.base_ready(self, int(u.team))
-	if not ready:
+	if order != "fight":
 		var job: Dictionary = Supply.bot_goal(self, u)
 		if not job.is_empty():
 			return job
 		return {"pos": _yard_exit(u.team), "unit": null, "kind": "move"}
-	if str(u.weapon) == "none":
-		var arm: Dictionary = Supply.bot_goal(self, u)
-		if not arm.is_empty():
-			return arm
 	var close = nearest_enemy(u, 2.5)
 	if close != null:
 		return {"pos": close.global_position, "unit": close, "kind": "chase"}

@@ -307,6 +307,47 @@ func _ready() -> void:
 	holt.global_position = holt_pos
 	holt.hp = holt_hp
 	holt.force_update_transform()
+	for forge3 in match_node.forges:
+		if int(forge3.get("team", -1)) == 0:
+			forge3["built"] = false
+	_check("one job, gather", match_node.bot_order(nia) == "supply")
+	for forge4 in match_node.forges:
+		if int(forge4.get("team", -1)) == 0:
+			forge4["built"] = true
+	_check("one job, build the gate", match_node.bot_order(nia) == "door")
+	for w3 in match_node.walls:
+		if str(w3.get("kind", "")) == "door" and int(w3.get("team", -1)) == 0:
+			w3["hp"] = float(w3["max"])
+			w3["shape"].disabled = false
+	_check("one job, take a weapon", match_node.bot_order(nia) == "arm")
+	var through_own: bool = match_node._segment_clear(Vector2(23.2, 25.5), Vector2(14.0, 25.5), 0.48, 0)
+	var through_enemy: bool = match_node._segment_clear(Vector2(23.2, 25.5), Vector2(14.0, 25.5), 0.48, 1)
+	_check("own closed gate can be crossed", through_own)
+	_check("enemy closed gate stays shut", not through_enemy)
+	var nia_at: Vector2 = nia.global_position
+	nia.global_position = Vector2(23.5, 25.5)
+	nia.force_update_transform()
+	nia.bot_lock = null
+	nia.bot_corner = ""
+	nia.wish = Vector2.ZERO
+	match_node.drop_route(nia)
+	for _gate in 70:
+		nia.tick_bot(1.0 / 30.0)
+		nia.predict_move(1.0 / 30.0)
+	_check("leaves the finished gate", nia.global_position.x < 21.0)
+	nia.global_position = nia_at
+	nia.bot_lock = null
+	nia.bot_corner = ""
+	nia.wish = Vector2.ZERO
+	match_node.drop_route(nia)
+	nia.force_update_transform()
+	for w4 in match_node.walls:
+		if str(w4.get("kind", "")) == "door" and int(w4.get("team", -1)) == 0:
+			w4["hp"] = 0.0
+			w4["shape"].disabled = true
+	for forge5 in match_node.forges:
+		if int(forge5.get("team", -1)) == 0:
+			forge5["built"] = false
 
 
 func _physics_process(_dt: float) -> void:

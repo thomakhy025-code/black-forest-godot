@@ -267,8 +267,7 @@ static func lock_ok(match_node, u, lock: Dictionary) -> bool:
 		var mx := float(ref.get("max", 1.0))
 		if hp >= mx and hp > 0.0:
 			return false
-		var rect: Rect2 = ref["rect"]
-		lock["pos"] = rect.get_center()
+		lock["pos"] = _door_stand(ref)
 		return true
 	if kind == "drop":
 		if not match_node.weapon_drops.has(ref):
@@ -608,6 +607,14 @@ static func _carry_job(match_node, u, forge) -> Dictionary:
 	return _fetch(match_node, u, missing, forge["pos"])
 
 
+static func _door_stand(door) -> Vector2:
+	var rect: Rect2 = door["rect"]
+	var center := rect.get_center()
+	if int(door.get("team", 0)) == 0:
+		return Vector2(rect.position.x - 1.2, center.y)
+	return Vector2(rect.end.x + 1.2, center.y)
+
+
 static func _door_job(match_node, u) -> Dictionary:
 	var door = null
 	var best := 100000.0
@@ -626,7 +633,7 @@ static func _door_job(match_node, u) -> Dictionary:
 			door = w
 	if door == null:
 		return {}
-	var center2: Vector2 = (door["rect"] as Rect2).get_center()
+	var center2: Vector2 = _door_stand(door)
 	if float(door.get("hp", 0.0)) <= 0.0:
 		var need_wood := int(door.get("wood", 0)) < 3
 		var need_fiber := int(door.get("fiber", 0)) < 1

@@ -364,36 +364,36 @@ func read_player() -> void:
 
 func tick_bot(dt: float) -> void:
 	_note_stuck(dt)
-	var gathering: bool = not sim.team_ready(team)
-	var foe = null if carrying != null or gathering else sim.nearest_enemy(self, 2.1)
-	var door = null if carrying != null else sim.enemy_door(self)
-	if not gathering and carrying == null and cast == null and dash == null:
-		var acted := false
-		if skills.get("fireball", false) and float(cds.get("fireball", 0.0)) <= 0.0 and foe == null:
-			var shot = sim.nearest_enemy(self, 12.0)
-			if shot != null and global_position.distance_to(shot.global_position) > 4.0 and sim.los(global_position, shot.global_position, team):
-				cast_face = (shot.global_position - global_position).angle()
-				has_cast_face = true
-				facing = cast_face
-				acted = try_cast("fireball")
-		if not acted and skills.get("spark", false) and float(cds.get("spark", 0.0)) <= 0.0:
-			var slash = sim.nearest_enemy(self, 5.0)
-			if slash != null and global_position.distance_to(slash.global_position) > 1.2 and sim.los(global_position, slash.global_position, team):
-				facing = (slash.global_position - global_position).angle()
-				acted = try_cast("spark")
-		if not acted and foe != null and skills.get("ignite", false) and float(cds.get("ignite", 0.0)) <= 0.0:
-			acted = try_cast("ignite")
-		if not acted and foe != null and skills.get("ember", false) and float(cds.get("ember", 0.0)) <= 0.0:
-			acted = try_cast("ember")
-		if not acted and foe != null and attack_cd <= 0.0:
-			try_swing()
-		elif not acted and door != null and attack_cd <= 0.0:
-			try_swing()
-	if role == "defend" and not gathering:
-		sim.maybe_repair(self)
-	sim.bot_supply(self)
-	if warp_cd <= 0.0 and not gathering:
-		sim.bot_use_map(self)
+	var order := str(sim.bot_order(self))
+	if order == "fight":
+		if cast == null and dash == null:
+			var foe = sim.nearest_enemy(self, 2.1)
+			var door = sim.enemy_door(self)
+			var acted := false
+			if skills.get("fireball", false) and float(cds.get("fireball", 0.0)) <= 0.0 and foe == null:
+				var shot = sim.nearest_enemy(self, 12.0)
+				if shot != null and global_position.distance_to(shot.global_position) > 4.0 and sim.los(global_position, shot.global_position, team):
+					cast_face = (shot.global_position - global_position).angle()
+					has_cast_face = true
+					facing = cast_face
+					acted = try_cast("fireball")
+			if not acted and skills.get("spark", false) and float(cds.get("spark", 0.0)) <= 0.0:
+				var slash = sim.nearest_enemy(self, 5.0)
+				if slash != null and global_position.distance_to(slash.global_position) > 1.2 and sim.los(global_position, slash.global_position, team):
+					facing = (slash.global_position - global_position).angle()
+					acted = try_cast("spark")
+			if not acted and foe != null and skills.get("ignite", false) and float(cds.get("ignite", 0.0)) <= 0.0:
+				acted = try_cast("ignite")
+			if not acted and foe != null and skills.get("ember", false) and float(cds.get("ember", 0.0)) <= 0.0:
+				acted = try_cast("ember")
+			if not acted and foe != null and attack_cd <= 0.0:
+				try_swing()
+			elif not acted and door != null and attack_cd <= 0.0:
+				try_swing()
+		if warp_cd <= 0.0:
+			sim.bot_use_map(self)
+	elif order == "supply" or order == "door" or order == "arm":
+		sim.bot_supply(self)
 	var goal: Dictionary = sim.bot_goal(self)
 	var goal_pos: Vector2 = goal["pos"]
 	var goal_unit = goal["unit"]
@@ -408,10 +408,7 @@ func tick_bot(dt: float) -> void:
 		wp = sim.crowd_slot(self, wp)
 	var delta := wp - global_position
 	var length := delta.length()
-	var gathering_goal := str(goal.get("kind", "")) == "node" or str(goal.get("kind", "")) == "pile" or str(goal.get("kind", "")) == "forge" or str(goal.get("kind", "")) == "door" or str(goal.get("kind", "")) == "drop"
-	if length < 0.6 and role == "defend" and not gathering_goal and sim.nearest_enemy(self, 9.0) == null:
-		wish = Vector2.ZERO
-	elif length > 0.2:
+	if length > 0.2:
 		wish = delta / length
 	else:
 		wish = Vector2.ZERO
