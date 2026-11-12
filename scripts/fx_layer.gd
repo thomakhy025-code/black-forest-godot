@@ -159,7 +159,7 @@ func _fireball(s) -> void:
 		_blob(at, 0.28, Color(1.0, 0.46, 0.08, 0.94))
 		_blob(at + dir * 0.1, 0.12, Color(1.0, 0.97, 0.76, 0.96))
 		return
-	_paint(tex, at, Vector2(1.85, 1.15), dir.angle(), 1.0)
+	_paint(tex, at, Vector2(3.7, 2.3), dir.angle(), 1.0)
 
 
 func _gem(at: Vector2) -> void:
@@ -287,17 +287,17 @@ func _strike(fx) -> void:
 	var size := Vector2(1.3, 1.3)
 	var rot := 0.0
 	if kind == "ignite":
-		size = Vector2(2.3, 2.2)
+		size = Vector2(4.6, 4.4)
 		rot = ang
-		at += fwd * 0.35
+		at += fwd * 0.7
 	elif kind == "spark":
-		size = Vector2(4.0, 1.35) if active else Vector2(3.2, 0.55)
+		size = Vector2(8.0, 2.7) if active else Vector2(6.4, 1.1)
 		rot = ang
-		at += fwd * 2.0
+		at += fwd * 4.0
 	elif kind == "ember":
-		size = Vector2(1.75, 1.3) if active else Vector2(1.45, 1.35)
+		size = Vector2(3.5, 2.6) if active else Vector2(2.9, 2.7)
 		rot = ang if active else 0.0
-		at += fwd * (0.75 if active else 0.45)
+		at += fwd * (1.5 if active else 0.9)
 	elif kind == "ice":
 		size = Vector2(1.7, 1.45) if active else Vector2(1.35, 1.15)
 	_paint(_art.get("%s-%s" % [kind, stage]), at, size, rot, alpha)

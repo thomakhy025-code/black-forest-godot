@@ -1861,7 +1861,7 @@ func explode_fireball(s, hit: Dictionary) -> void:
 func drop_fire(at: Vector2) -> void:
 	var f := State.new()
 	f.pos = at
-	f.r = 0.45
+	f.r = 0.9
 	f.t = 2.4
 	fires.append(f)
 	if fires.size() > 40:

@@ -47,12 +47,12 @@ func _ready() -> void:
 	_check("sword damage", absf(Balance.SWORD_DAMAGE - 15.0) < 0.001)
 	_check("wand damage", absf(Balance.WAND_DAMAGE - 10.0) < 0.001)
 	_check("attack interval", absf(Balance.ATTACK_INTERVAL - 1.0) < 0.001)
-	_check("wand rect", absf(Balance.WAND_LEN - 3.0) < 0.001 and absf(Balance.WAND_W - 2.0) < 0.001)
+	_check("wand rect", absf(Balance.WAND_LEN - 6.0) < 0.001 and absf(Balance.WAND_W - 4.0) < 0.001)
 	_check("sword kit", Balance.WEAPON_KITS["sword"] == ["ignite", "spark", "ember"])
 	_check("wand kit", Balance.WEAPON_KITS["wand"] == ["fireball", "ice", "mega"])
 	_check("cdr", absf(Balance.cd_mul({"cdr": 10}) - 0.95) < 0.001)
 	_check("max hp", absf(Balance.max_hp({"hp": 10}) - 125.0) < 0.001)
-	_check("sword range", absf(Balance.SWORD_RANGE - 0.5) < 0.001)
+	_check("sword range", absf(Balance.SWORD_RANGE - 1.0) < 0.001)
 	_check("4 forges", match_node.forges.size() == 4)
 	var open_doors := 0
 	for w in match_node.walls:
@@ -241,7 +241,7 @@ func _ready() -> void:
 	match_node.resolve_swing(player)
 	_check("wand hit 10", holt.hp < wand_before - 9.0)
 	holt.hp = holt.max_hp
-	holt.global_position = player.global_position + Vector2(2.0, 1.7)
+	holt.global_position = player.global_position + Vector2(2.0, 2.3)
 	var miss_before: float = holt.hp
 	match_node.resolve_swing(player)
 	_check("wand misses wide", absf(holt.hp - miss_before) < 0.01)

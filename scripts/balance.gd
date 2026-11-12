@@ -9,7 +9,7 @@ const KEEP_INSET := 0.31
 const SWORD_DAMAGE := 15.0
 const WAND_DAMAGE := 10.0
 const FIST_DAMAGE := 5.0
-const FIST_RANGE := 0.7
+const FIST_RANGE := 1.4
 const FIST_ARC := PI * 0.7
 const BAG_CAP := 3
 const BAG_SLOW := 0.07
@@ -21,20 +21,20 @@ const TREE_REGROW := 25.0
 const PLANT_REGROW := 18.0
 const ANIMAL_REGROW := 22.0
 const WEAPON_DROP_TIME := 3.0
-const SWORD_RANGE := 0.5
+const SWORD_RANGE := 1.0
 const SWORD_ARC := PI * 120.0 / 180.0
 const ATTACK_INTERVAL := 1.0
-const WAND_LEN := 3.0
-const WAND_W := 2.0
-const IGNITE_RANGE := 1.1
+const WAND_LEN := 6.0
+const WAND_W := 4.0
+const IGNITE_RANGE := 2.2
 const IGNITE_ARC := PI
 const IGNITE_DAMAGE := 22.0
 const IGNITE_BURN_DPS := 5.0
 const IGNITE_BURN_TIME := 3.0
-const SPARK_LEN := 4.0
-const SPARK_W := 1.5
+const SPARK_LEN := 8.0
+const SPARK_W := 3.0
 const SPARK_DAMAGE := 18.0
-const EMBER_RANGE := 1.25
+const EMBER_RANGE := 2.5
 const EMBER_ARC := PI * 120.0 / 180.0
 const EMBER_DAMAGE := 8.0
 const EMBER_BURN_DPS := 8.0
@@ -49,22 +49,22 @@ const BANK_TIME := 10.0
 const MATCH_TIME := 300.0
 const RESPAWN_TIME := 6.0
 
-const MEGA_AHEAD := 7.0
-const MEGA_RADIUS := 5.0
+const MEGA_AHEAD := 14.0
+const MEGA_RADIUS := 10.0
 const MEGA_TIME := 2.5
 const MEGA_DAMAGE := 200.0
-const SABER_LEN := 7.5
-const SABER_W := 2.0
+const SABER_LEN := 15.0
+const SABER_W := 4.0
 const SABER_TIME := 1.5
 const SABER_DAMAGE := 75.0
 const DASH_DIST := 4.0
-const DASH_REACH := 0.95
+const DASH_REACH := 1.9
 const FIREBALL_DIRECT := 30.0
 const FIREBALL_SPLASH := 10.0
-const FIREBALL_SPLASH_R := 0.8
+const FIREBALL_SPLASH_R := 1.6
 const FIREBALL_SPEED := 7.5
-const FIREBALL_LIFE := 1.25
-const FIREBALL_RADIUS := 0.95
+const FIREBALL_LIFE := 2.5
+const FIREBALL_RADIUS := 1.9
 const TOWER_CAPTURE := 3.0
 
 const LAYER_WALL := 1
@@ -90,19 +90,19 @@ const WEAPON_KITS := {
 const SKILLS := {
 	"ignite": {
 		"name": "Ignition Swipe", "pool": "sword", "key": "1", "cast": 0.15, "cd": 8.0, "mp": 0.25,
-		"blurb": "A rooted 180 degree swipe, 1.1 m. 22 damage and 5 burn DPS for 3 seconds."
+		"blurb": "A rooted 180 degree swipe, 2.2 m. 22 damage and 5 burn DPS for 3 seconds."
 	},
 	"spark": {
 		"name": "Horizontal Spark Slash", "pool": "sword", "key": "2", "cast": 0.2, "cd": 12.0, "mp": 0.3,
-		"blurb": "A rooted slash 4 m long and 1.5 m wide. 18 damage."
+		"blurb": "A rooted slash 8 m long and 3 m wide. 18 damage."
 	},
 	"ember": {
 		"name": "Ember Burn", "pool": "sword", "key": "3", "cast": 0.3, "cd": 14.0, "mp": 0.35,
-		"blurb": "120 degree arc, 1.25 m. 8 damage and a lingering burn, 8 DPS for 4 seconds."
+		"blurb": "120 degree arc, 2.5 m. 8 damage and a lingering burn, 8 DPS for 4 seconds."
 	},
 	"fireball": {
 		"name": "Fireball", "pool": "magic", "key": "1", "cast": 0.5, "cd": 8.0, "mp": 0.25,
-		"blurb": "Flies along your facing. Wide hit: 30 on the first enemy, 10 splash in 0.8m. The trail burns for 5s at 5 HP each second. Farther from inside a captured bridge tower. Hits gates, covers, and ore. Ice clones block it."
+		"blurb": "Flies along your facing. Wide hit: 30 on the first enemy, 10 splash in 1.6m. The trail burns for 5s at 5 HP each second. Farther from inside a captured bridge tower. Hits gates, covers, and ore. Ice clones block it."
 	},
 	"ice": {
 		"name": "Ice Shadowing", "pool": "magic", "key": "2", "cast": 0.5, "cd": 20.0, "mp": 0.5,
@@ -110,7 +110,7 @@ const SKILLS := {
 	},
 	"mega": {
 		"name": "Mega Explosion", "pool": "magic", "key": "3", "cast": 2.5, "cd": 30.0, "mp": 0.0, "mp_flat": 70.0,
-		"blurb": "Channel 2.5s. You cannot move, attack, or use other skills. Blast centered 7m along your facing, radius 5m. 200 HP to everyone inside, teammates included. 70 MP. 30s cooldown, shortened by Cooldown Reduction."
+		"blurb": "Channel 2.5s. You cannot move, attack, or use other skills. Blast centered 14m along your facing, radius 10m. 200 HP to everyone inside, teammates included. 70 MP. 30s cooldown, shortened by Cooldown Reduction."
 	},
 }
 
