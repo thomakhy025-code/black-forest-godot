@@ -125,7 +125,7 @@ func show_result(result: Dictionary) -> void:
 	else:
 		result_body.text = "Time ran out."
 	if again_btn:
-		again_btn.text = "Leave" if sim != null and sim.net_role == "client" else "Rematch"
+		again_btn.text = "Leave" if sim != null and sim.net_role != "offline" else "Rematch"
 
 
 func _process(_delta: float) -> void:

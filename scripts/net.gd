@@ -1,7 +1,9 @@
 extends Node
-## Dedicated server for many 5v5 matches, using Godot's high-level multiplayer API.
+## High-level multiplayer. The desktop Host button is a listen server: the person
+## who presses Host is peer 1, plays as Crimson, and runs the match. The first
+## friend who presses Join is Azure. Each human sends only their own input.
 ##
-## Desktop server (UDP 7777):
+## A headless dedicated server still waits for two remote players:
 ##   godot --headless --path <project> -- --server
 ## Browser server (WebSocket, then expose it with a TLS tunnel):
 ##   godot --headless --path <project> -- --server --websocket
@@ -11,9 +13,8 @@ extends Node
 ## A typed WebSocket host in web_endpoint.gd is only for a dedicated server.
 ## Versus Robots never opens a peer.
 ##
-## Play Online pairs the next two people into their own match. Bots fill the other
-## eight seats. Each client sends its own input. The server simulates that match and
-## sends snapshots only to its two humans. A client predicts its own walk. Everyone
+## Bots fill the other eight seats. The host simulates the match and sends
+## snapshots only to the other human. A client predicts its own walk. Everyone
 ## else is drawn from a world-state buffer 100 ms in the past.
 
 const Balance = preload("res://scripts/balance.gd")
@@ -83,6 +84,9 @@ var _boot_msec := 0
 var _closing := false
 var _finished := false
 var _smoke_ready_msec := 0
+var listen_host := false
+var host_profile: Dictionary = {}
+var _listen_poll_frame := -1
 var browser_link := false
 var browser_host := false
 var browser_started := false
@@ -160,15 +164,34 @@ func _parse_args() -> void:
 			smoke_name = str(args[i])
 		elif arg == "--websocket":
 			use_websocket = true
+		elif arg == "--listen":
+			listen_host = true
 		i += 1
 	if role == "server":
+		var want_listen := listen_host
 		start_server(port)
+		if want_listen and role == "server":
+			listen_host = true
+			host_profile = _smoke_profile() if smoke else _disk_profile()
+			_server_status()
 	elif role == "client":
 		var profile: Dictionary = _smoke_profile() if smoke else _disk_profile()
 		start_client(address, port, profile)
 
 
+func host_and_play(prt: int, profile: Dictionary) -> void:
+	start_server(prt)
+	if role != "server":
+		return
+	listen_host = true
+	host_profile = _clean_profile(profile)
+	_server_status()
+
+
 func start_server(prt: int) -> void:
+	listen_host = false
+	host_profile = {}
+	_clear_match()
 	_shutdown_peer()
 	role = "server"
 	port = prt
@@ -291,7 +314,7 @@ func _websocket_url(addr: String, prt: int) -> String:
 func leave(back_to_armory: bool = true) -> void:
 	if _closing:
 		return
-	var show := back_to_armory and (role == "client" or browser_link) and not smoke
+	var show := back_to_armory and (role == "client" or browser_link or listen_host) and not smoke
 	_closing = true
 	WebPair.stop()
 	browser_link = false
@@ -416,6 +439,13 @@ func rpc_join(profile: Dictionary) -> void:
 		return
 	var clean := _clean_profile(profile)
 	print("NET join ", id, " ", str(clean["name"]))
+	if listen_host:
+		if not rooms.is_empty():
+			if peer != null:
+				peer.disconnect_peer(id)
+			return
+		_begin_listen_room(id, clean)
+		return
 	while not waiting.is_empty() and not multiplayer.get_peers().has(int(waiting[0]["peer_id"])):
 		waiting.pop_front()
 	if waiting.size() < PLAYERS_PER_MATCH - 1:
@@ -824,6 +854,18 @@ func _server_tick() -> void:
 				continue
 			finished.append(int(room.get("id", 0)))
 			continue
+		if listen_host and node.player:
+			if node.paused:
+				if _listen_poll_frame != Engine.get_physics_frames():
+					_listen_poll_frame = Engine.get_physics_frames()
+					if Input.is_action_just_pressed("dismiss") or Input.is_action_just_pressed("help"):
+						node.dismiss_help()
+				continue
+			if _listen_poll_frame != Engine.get_physics_frames():
+				_listen_poll_frame = Engine.get_physics_frames()
+				node._poll_actions()
+				if node.paused:
+					continue
 		var ack := _consume_inputs(node)
 		if browser_host and bool(room.get("browser", false)) and node.player:
 			var buttons := _take_buttons()
@@ -914,7 +956,7 @@ func _consume_inputs(node) -> Dictionary:
 	var now := Time.get_ticks_msec()
 	for u in node.units:
 		var id := int(u.peer_id)
-		if id == 0:
+		if id == 0 or (listen_host and id == multiplayer.get_unique_id()):
 			continue
 		var q: Array = queues.get(id, [])
 		if browser_host and q.size() > 2:
@@ -1118,6 +1160,12 @@ func _take_buttons() -> int:
 
 
 func _server_status() -> void:
+	if listen_host:
+		if rooms.is_empty():
+			_status("Hosting on port %d. You are peer 1. Waiting for a friend to press Join." % port)
+		else:
+			_status("Playing as Crimson. Your friend is Azure.")
+		return
 	var kind := "WebSocket" if use_websocket else "UDP"
 	_status("Dedicated server listening for %s on port %d. Waiting %d. Matches %d." % [kind, port, waiting.size(), rooms.size()])
 
@@ -1205,6 +1253,39 @@ func _begin_room(crimson: Dictionary, azure: Dictionary) -> void:
 		rpc_start.rpc_id(a_id, info)
 
 
+func _begin_listen_room(client_id: int, client_profile: Dictionary) -> void:
+	var node := _host_match()
+	if node == null or not is_instance_valid(node):
+		return
+	var mine := host_profile
+	if mine.is_empty():
+		mine = _clean_profile(_disk_profile())
+	node.start_online_match(mine, client_profile, 1, client_id, 1, true, true)
+	var room_id := _room_seq
+	_room_seq += 1
+	var room := {
+		"id": room_id,
+		"peers": [1, client_id],
+		"match": node,
+		"host": node,
+		"listen": true,
+		"keep_result": true,
+	}
+	rooms.append(room)
+	_peer_room[1] = room_id
+	_peer_room[client_id] = room_id
+	print("NET listen match units ", node.units.size())
+	_server_status()
+	if not _can_rpc() or not multiplayer.get_peers().has(client_id):
+		return
+	rpc_start.rpc_id(client_id, {
+		"crimson": mine,
+		"azure": client_profile,
+		"crimson_peer": 1,
+		"azure_peer": client_id,
+	})
+
+
 func _drop_room(room_id: int) -> void:
 	var room := _room_by_id(room_id)
 	if room.is_empty():
@@ -1216,6 +1297,7 @@ func _drop_room(room_id: int) -> void:
 		var node = room.get("match")
 		if node and is_instance_valid(node):
 			node.queue_free()
+	var listen_room := bool(room.get("listen", false))
 	for pid in room.get("peers", []):
 		var peer_id := int(pid)
 		_peer_room.erase(peer_id)
@@ -1230,6 +1312,14 @@ func _drop_room(room_id: int) -> void:
 		if int(found.get("id", -1)) != room_id:
 			next.append(found)
 	rooms = next
+	if room.get("match") == match_node:
+		match_node = null
+	if listen_room and not _closing:
+		var main := get_tree().root.get_node_or_null("Main")
+		if main:
+			main.match_node = null
+			if main.has_method("_show_screen"):
+				main._show_screen("online")
 
 
 func _host_match() -> Node:
@@ -1278,10 +1368,13 @@ func _on_peer_disconnected(id: int) -> void:
 	if smoke:
 		return
 	var node = room.get("match")
+	var was_listen := bool(room.get("listen", false))
 	if node and is_instance_valid(node) and str(node.phase) == "play":
 		node.end_match("left", -1)
 	_drop_room(int(room.get("id", 0)))
 	_server_status()
+	if was_listen:
+		_status("Your friend left. Still hosting on port %d. Waiting for a friend to press Join." % port)
 
 
 func _send_join() -> void:
@@ -1336,10 +1429,22 @@ func _smoke_watch() -> void:
 		return
 	var elapsed := float(Time.get_ticks_msec() - _boot_msec) / 1000.0
 	if role == "server":
-		var inputs_ok := input_peers.size() >= 2
-		for id in input_peers.keys():
-			if int(input_peers[id]) < 5:
-				inputs_ok = false
+		var inputs_ok := false
+		if listen_host:
+			var guest_ok := false
+			for id in input_peers.keys():
+				if int(id) != 1 and int(input_peers[id]) >= 5:
+					guest_ok = true
+			var host_ok := false
+			if match_node != null and is_instance_valid(match_node) and match_node.player != null:
+				var azure = match_node.unit_by_id("azure")
+				host_ok = int(match_node.player.peer_id) == 1 and match_node.player.is_player and azure != null and azure.net_controlled
+			inputs_ok = guest_ok and host_ok
+		else:
+			inputs_ok = input_peers.size() >= 2
+			for id in input_peers.keys():
+				if int(input_peers[id]) < 5:
+					inputs_ok = false
 		if snapshot_count >= 8 and inputs_ok:
 			if _smoke_ready_msec == 0:
 				_smoke_ready_msec = Time.get_ticks_msec()
@@ -1420,6 +1525,9 @@ func _reset_runtime() -> void:
 	has_held = false
 	local_seq = 0
 	_acc = 0.0
+	listen_host = false
+	host_profile = {}
+	_listen_poll_frame = -1
 	browser_link = false
 	browser_host = false
 	browser_started = false

@@ -169,7 +169,17 @@ func _host_online() -> void:
 		_play_web()
 		return
 	Net.use_websocket = false
-	Net.start_server(7777)
+	var prt := 7777
+	if port_edit and port_edit.text.is_valid_int():
+		prt = int(port_edit.text)
+	var data: Dictionary = Profile.snapshot()
+	if str(data.get("gender", "")) != "male" and str(data.get("gender", "")) != "female":
+		data["gender"] = "female"
+	Net.host_and_play(prt, {
+		"name": str(data.get("name", "You")),
+		"gender": str(data.get("gender", "female")),
+		"stats": data.get("stats", {}),
+	})
 	online_status.text = Net.status
 
 
@@ -320,7 +330,7 @@ func _build_online() -> void:
 	var on_web := OS.has_feature("web")
 	var hint_text := "Play online looks for one opponent. You do not type an address. You play as Crimson or Azure, bots fill the other eight seats, and other pairs can play at the same time. The match decides hits, diamonds, and the win. Versus Robots stays on this machine."
 	if not on_web:
-		hint_text = "Host a match on this computer, or join one. You wait for one opponent, play as Crimson or Azure, and bots fill the other eight seats. Other pairs can play at the same time. The server decides hits, diamonds, and the win. Host listens on UDP 7777. Versus Robots stays on this machine."
+		hint_text = "Host starts the match on this computer and you play as Crimson. A friend presses Join with 127.0.0.1 on this computer, or with this computer's address from another one. Each player sends only their own input. The host runs hits, diamonds, and the win. Eight robots fill the other seats. Port 7777. Versus Robots stays on this machine."
 	var hint := _title_label(hint_text, 15)
 	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	hint.custom_minimum_size = Vector2(640, 0)
