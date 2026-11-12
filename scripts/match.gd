@@ -474,15 +474,17 @@ func steer_point(u, goal: Vector2) -> Vector2:
 	# in the courtyard. Leave through the gate first.
 	if _inside_yard(u.global_position, u.team) and not _inside_yard(goal, u.team):
 		var gate := _yard_exit(u.team)
-		if u.global_position.distance_to(gate) > 0.85:
+		var lane := _door_lane(u, gate)
+		if u.global_position.distance_to(lane) > 0.85:
 			u.bot_corner = ""
-			return gate
+			return lane
 	if not _inside_yard(u.global_position, u.team) and _inside_yard(goal, u.team):
 		var gate_in := _yard_exit(u.team)
-		var hub := _yard_hub(u.team)
-		if u.global_position.distance_to(gate_in) > 2.2 and _walk_clear(u, gate_in):
+		var lane_in := _door_lane(u, gate_in)
+		var hub := _hub_slot(u)
+		if u.global_position.distance_to(lane_in) > 2.2 and _walk_clear(u, lane_in):
 			u.bot_corner = ""
-			return gate_in
+			return lane_in
 		if _walk_clear(u, hub):
 			u.bot_corner = ""
 			return hub
@@ -492,9 +494,9 @@ func steer_point(u, goal: Vector2) -> Vector2:
 		u.bot_corner = ""
 		if _walk_clear(u, goal):
 			return goal
-		var hub := _yard_hub(u.team)
-		if u.global_position.distance_to(hub) > 0.8 and _walk_clear(u, hub):
-			return hub
+		var hub_in := _hub_slot(u)
+		if u.global_position.distance_to(hub_in) > 0.8 and _walk_clear(u, hub_in):
+			return hub_in
 		return goal
 	if _walk_clear(u, goal):
 		u.bot_corner = ""
@@ -545,12 +547,15 @@ func _follow_path(u, path: Array, goal: Vector2) -> Vector2:
 	if idx + 1 < path.size():
 		next_id = str(path[idx + 1])
 		next_at = Balance.NODES[next_id]
-	var arrived: bool = u.global_position.distance_to(here) <= 0.7
+	var slot := _corner_slot(u, here)
+	var arrived: bool = u.global_position.distance_to(here) <= 0.7 or u.global_position.distance_to(slot) <= 0.6
 	if arrived and next_id != held and _walk_clear(u, next_at):
 		u.bot_corner = next_id
-		return next_at
-	if _walk_clear(u, here):
+		return _aim_corner(u, next_at, goal)
+	if u.global_position.distance_to(slot) <= 0.6 and next_id != held and _walk_clear(u, here):
 		return here
+	if _walk_clear(u, here):
+		return _aim_corner(u, here, goal)
 	u.bot_corner = ""
 	var fallback := ""
 	var fallback_cost := 1.0e12
@@ -565,7 +570,7 @@ func _follow_path(u, path: Array, goal: Vector2) -> Vector2:
 			fallback = id
 	if fallback != "":
 		u.bot_corner = fallback
-		return Balance.NODES[fallback]
+		return _aim_corner(u, Balance.NODES[fallback], goal)
 	if _inside_yard(goal, u.team) and not _inside_yard(u.global_position, u.team):
 		u.bot_corner = ""
 		return _outside_flank(u)
@@ -628,22 +633,33 @@ func stand_point(u, goal: Vector2) -> Vector2:
 		return u.global_position
 	var gap := clampf(float(best.get("r", 0.35)) + 0.35, 0.55, reach)
 	var prefer := Vector2.RIGHT if int(u.team) == 0 else Vector2.LEFT
-	for side in [prefer, -prefer, Vector2.UP, Vector2.DOWN]:
+	var sides: Array = [prefer, -prefer, Vector2.UP, Vector2.DOWN]
+	var start := posmod(_lane_index(str(u.unit_id)) + 2, 4)
+	for n in 4:
+		var side: Vector2 = sides[(start + n) % 4]
 		var at: Vector2 = center + side * gap
-		if not blocked_circle(at, float(u.radius) * 0.85, int(u.team)):
-			return at
+		if blocked_circle(at, float(u.radius), int(u.team)):
+			continue
+		if _teammate_at(u, at, 0.9):
+			continue
+		return at
 	return center + prefer * gap
 
 
 func _walk_clear(u, goal: Vector2) -> bool:
-	var origin: Vector2 = u.global_position
-	if _cuts_wall(origin, goal, float(u.radius)):
+	return _segment_clear(u.global_position, goal, float(u.radius), int(u.team))
+
+
+func _segment_clear(origin: Vector2, goal: Vector2, radius: float, team: int) -> bool:
+	if origin.distance_squared_to(goal) < 0.01:
+		return true
+	if _cuts_wall(origin, goal, radius):
 		return false
-	if not los(origin, goal, u.team):
+	if not los(origin, goal, team):
 		return false
 	var step: Vector2 = (goal - origin) / 5.0
 	for i in 4:
-		if blocked_circle(origin + step * float(i + 1), float(u.radius), u.team):
+		if blocked_circle(origin + step * float(i + 1), radius, team):
 			return false
 	return true
 
@@ -687,6 +703,100 @@ func _yard_exit(team: int) -> Vector2:
 
 func _yard_hub(team: int) -> Vector2:
 	return Vector2(14.0, 25.5) if team == 0 else Vector2(74.0, 25.5)
+
+
+func _lane_index(id: String) -> int:
+	if id == "nia" or id == "holt":
+		return -2
+	if id == "joss" or id == "sable":
+		return -1
+	if id == "bram" or id == "mira":
+		return 1
+	if id == "quinn" or id == "you":
+		return 2
+	return 0
+
+
+func _door_lane(u, gate: Vector2) -> Vector2:
+	# The door is one point, so the whole team walks onto it and stays there.
+	# Each robot keeps a lane across the opening and still passes the gate.
+	var y := clampf(gate.y + float(_lane_index(str(u.unit_id))) * 1.05, 23.0, 28.0)
+	return Vector2(gate.x, y)
+
+
+func _hub_slot(u) -> Vector2:
+	var hub := _yard_hub(int(u.team))
+	var i := _lane_index(str(u.unit_id))
+	var at := hub + Vector2(float(i) * 0.95, float(absi(i) % 2) * 0.75)
+	if blocked_circle(at, float(u.radius), int(u.team)):
+		return hub
+	return at
+
+
+func _teammate_at(u, at: Vector2, rad: float) -> bool:
+	var rad2 := rad * rad
+	for o in units:
+		if o == u or o.dead or int(o.team) != int(u.team):
+			continue
+		if o.global_position.distance_squared_to(at) < rad2:
+			return true
+	return false
+
+
+func _corner_slot(u, here: Vector2) -> Vector2:
+	var i := _lane_index(str(u.unit_id))
+	if i == 0:
+		return here
+	var ang := float(i + 2) / 5.0 * TAU
+	var at := here + Vector2(cos(ang), sin(ang)) * 1.05
+	if blocked_circle(at, float(u.radius), int(u.team)):
+		return here
+	return at
+
+
+func _aim_corner(u, here: Vector2, goal: Vector2) -> Vector2:
+	var slot := _corner_slot(u, here)
+	if slot.distance_squared_to(here) < 0.04:
+		return here
+	var radius := float(u.radius)
+	var team := int(u.team)
+	# A slot beside the corner can hide the next tree behind the wall. The bot
+	# then steps past the slot and back forever. Use the corner itself when
+	# only the corner can see the goal.
+	var slot_sees := _segment_clear(slot, goal, radius, team)
+	var node_sees := _segment_clear(here, goal, radius, team)
+	if node_sees and not slot_sees:
+		return here
+	if _walk_clear(u, slot):
+		return slot
+	return here
+
+
+func crowd_slot(u, wp: Vector2) -> Vector2:
+	# The last step of a shared job is one coordinate. The closest robot takes
+	# it. The others stand on their own slot and keep moving.
+	var origin: Vector2 = u.global_position
+	var mine: float = origin.distance_squared_to(wp)
+	var sharing := false
+	var closest := true
+	for o in units:
+		if o == u or o.dead or int(o.team) != int(u.team):
+			continue
+		var od: float = o.global_position.distance_squared_to(wp)
+		if od > 4.0:
+			continue
+		sharing = true
+		if od < mine - 0.01 or (absf(od - mine) <= 0.01 and str(o.unit_id) < str(u.unit_id)):
+			closest = false
+	if not sharing or closest:
+		return wp
+	var ang := float(_lane_index(str(u.unit_id)) + 2) / 5.0 * TAU
+	var beside: Vector2 = wp + Vector2(cos(ang), sin(ang)) * 1.1
+	if blocked_circle(beside, float(u.radius), int(u.team)):
+		return wp
+	if _cuts_wall(origin, beside, float(u.radius)):
+		return wp
+	return beside
 
 
 func _node_seeing(goal: Vector2, team: int) -> String:
@@ -2003,11 +2113,18 @@ func _separate(u) -> void:
 		var delta: Vector2 = u.global_position - o.global_position
 		var dist2 := delta.length_squared()
 		var need: float = u.radius + o.radius
-		if dist2 > 0.000001 and dist2 < need * need:
-			var dist := sqrt(dist2)
-			var push: float = (need - dist) * (1.0 if o.is_player else 0.5)
-			var n := delta / dist
-			u.try_step(n.x * push, n.y * push)
+		if dist2 >= need * need:
+			continue
+		var dist := 0.0
+		var n := Vector2.RIGHT
+		if dist2 > 0.000001:
+			dist = sqrt(dist2)
+			n = delta / dist
+		else:
+			var ang := float(_lane_index(str(u.unit_id)) + 2) * TAU / 5.0
+			n = Vector2(cos(ang), sin(ang))
+		var push: float = (need - dist) * (1.0 if o.is_player else 0.5)
+		u.try_step(n.x * push, n.y * push)
 
 
 func in_arc(origin: Vector2, facing: float, target_pos: Vector2, target_r: float, reach: float, arc: float) -> bool:

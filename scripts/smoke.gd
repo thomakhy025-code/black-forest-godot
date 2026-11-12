@@ -149,6 +149,26 @@ func _ready() -> void:
 	if job_kind == "node":
 		var stand: Vector2 = match_node.stand_point(joss, job_pos)
 		_check("stands off the trunk", stand.distance_to(job_pos) > 0.45)
+	var quinn = null
+	for unit3 in match_node.units:
+		if str(unit3.unit_id) == "quinn":
+			quinn = unit3
+	if holt != null and quinn != null:
+		var holt_lane: Vector2 = match_node._door_lane(holt, Vector2(65.2, 25.5))
+		var quinn_lane: Vector2 = match_node._door_lane(quinn, Vector2(65.2, 25.5))
+		_check("door lanes differ", holt_lane.distance_to(quinn_lane) > 0.9)
+		var quinn_at: Vector2 = quinn.global_position
+		var holt_saved: Vector2 = holt.global_position
+		quinn.global_position = Vector2(71.5, 17.2)
+		holt.global_position = Vector2(70.6, 17.2)
+		quinn.force_update_transform()
+		holt.force_update_transform()
+		var beside: Vector2 = match_node.crowd_slot(holt, Vector2(71.5, 17.2))
+		_check("stands beside a teammate", beside.distance_to(Vector2(71.5, 17.2)) > 0.8)
+		quinn.global_position = quinn_at
+		holt.global_position = holt_saved
+		quinn.force_update_transform()
+		holt.force_update_transform()
 	var saved: Vector2 = nia.global_position
 	nia.global_position = Vector2(10, 15.1)
 	nia.force_update_transform()

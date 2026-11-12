@@ -404,12 +404,14 @@ func tick_bot(dt: float) -> void:
 			goal_pos = goal_unit.global_position + n * 1.7
 	var stand: Vector2 = sim.stand_point(self, goal_pos)
 	var wp: Vector2 = sim.steer_point(self, stand)
+	if str(bot_corner) == "" and wp.distance_to(stand) < 0.4:
+		wp = sim.crowd_slot(self, wp)
 	var delta := wp - global_position
 	var length := delta.length()
 	var gathering_goal := str(goal.get("kind", "")) == "node" or str(goal.get("kind", "")) == "pile" or str(goal.get("kind", "")) == "forge" or str(goal.get("kind", "")) == "door" or str(goal.get("kind", "")) == "drop"
 	if length < 0.6 and role == "defend" and not gathering_goal and sim.nearest_enemy(self, 9.0) == null:
 		wish = Vector2.ZERO
-	elif length > 0.001:
+	elif length > 0.2:
 		wish = delta / length
 	else:
 		wish = Vector2.ZERO
