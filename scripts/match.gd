@@ -480,35 +480,48 @@ func steer_point(u, goal: Vector2) -> Vector2:
 	if _walk_clear(u, goal):
 		u.bot_corner = ""
 		return goal
-	var start := _path_start(u)
 	var goal_id := _node_seeing(goal, u.team)
 	var cached: Dictionary = _steer.get(u.unit_id, {})
 	var path: Array = cached.get("path", [])
-	if str(cached.get("from", "")) != start or str(cached.get("to", "")) != goal_id:
+	if str(cached.get("to", "")) != goal_id or path.is_empty():
+		var start := _path_start(u)
 		path = Balance.astar(start, goal_id)
 		_steer[u.unit_id] = {"from": start, "to": goal_id, "path": path}
+		u.bot_corner = ""
+	return _follow_path(u, path, goal)
+
+
+func drop_route(u) -> void:
+	_steer.erase(u.unit_id)
+	u.bot_corner = ""
+
+
+func _follow_path(u, path: Array, goal: Vector2) -> Vector2:
+	var idx := 0
 	var held := str(u.bot_corner)
 	if held != "" and path.has(held):
+		idx = path.find(held)
 		var held_at: Vector2 = Balance.NODES[held]
-		if u.global_position.distance_to(held_at) > 1.15 and _walk_clear(u, held_at):
+		if u.global_position.distance_to(held_at) > 1.2:
 			return held_at
-	var fallback := goal
-	var have_fallback := false
-	for id in path:
+		idx = mini(idx + 1, path.size() - 1)
+	for i in range(idx, path.size()):
+		var id := str(path[i])
 		var n: Vector2 = Balance.NODES[id]
-		if u.global_position.distance_to(n) < 1.15:
+		if u.global_position.distance_to(n) < 1.2:
 			continue
-		if not have_fallback:
-			fallback = n
-			have_fallback = true
 		if _walk_clear(u, n):
-			u.bot_corner = str(id)
+			u.bot_corner = id
 			return n
 	if _inside_yard(goal, u.team) and not _inside_yard(u.global_position, u.team):
 		u.bot_corner = ""
 		return _outside_flank(u)
+	if idx < path.size():
+		var last := str(path[idx])
+		u.bot_corner = last
+		return Balance.NODES[last]
 	u.bot_corner = ""
-	return fallback
+	return goal
 
 
 func _path_start(u) -> String:
@@ -534,9 +547,9 @@ func _path_start(u) -> String:
 func _outside_flank(u) -> Vector2:
 	var gate := _yard_exit(u.team)
 	if u.global_position.y < 14.0:
-		return Vector2(gate.x, minf(u.global_position.y, 12.0))
+		return Vector2(gate.x, 11.2)
 	if u.global_position.y > 37.0:
-		return Vector2(gate.x, maxf(u.global_position.y, 39.0))
+		return Vector2(gate.x, 39.2)
 	return gate
 
 
@@ -562,10 +575,8 @@ func stand_point(u, goal: Vector2) -> Vector2:
 	var reach: float = Balance.FIST_RANGE + float(best.get("r", 0.35))
 	if u.global_position.distance_to(center) <= reach:
 		return u.global_position
-	var away: Vector2 = u.global_position - center
-	if away.length_squared() < 0.0001:
-		away = Vector2.RIGHT
-	return center + away.normalized() * clampf(reach * 0.82, 0.55, reach)
+	var approach := Vector2.RIGHT if int(u.team) == 0 else Vector2.LEFT
+	return center + approach * clampf(reach * 0.82, 0.55, reach)
 
 
 func _walk_clear(u, goal: Vector2) -> bool:
@@ -633,7 +644,7 @@ func enemy_door(u):
 
 
 func team_ready(team_id: int) -> bool:
-	return Supply.machines_ready(self, team_id)
+	return Supply.base_ready(self, team_id)
 
 
 func bot_goal(u) -> Dictionary:
@@ -643,46 +654,32 @@ func bot_goal(u) -> Dictionary:
 func _fresh_bot_goal(u) -> Dictionary:
 	if u.carrying != null:
 		return {"pos": vaults[u.team]["pos"], "unit": null, "kind": "move"}
-	var ready: bool = Supply.machines_ready(self, int(u.team))
-	if ready:
-		var close = nearest_enemy(u, 2.5)
-		if close != null:
-			return {"pos": close.global_position, "unit": close, "kind": "chase"}
-	var job: Dictionary = Supply.bot_goal(self, u)
-	if not job.is_empty():
-		return job
+	var ready: bool = Supply.base_ready(self, int(u.team))
 	if not ready:
+		var job: Dictionary = Supply.bot_goal(self, u)
+		if not job.is_empty():
+			return job
 		return {"pos": _yard_exit(u.team), "unit": null, "kind": "move"}
+	if str(u.weapon) == "none":
+		var arm: Dictionary = Supply.bot_goal(self, u)
+		if not arm.is_empty():
+			return arm
+	var close = nearest_enemy(u, 2.5)
+	if close != null:
+		return {"pos": close.global_position, "unit": close, "kind": "chase"}
+	return _steal_goal(u)
+
+
+func _steal_goal(u) -> Dictionary:
 	var mine = diamonds[u.team]
 	var theirs = diamonds[1 - u.team]
-	if u.role == "defend":
-		if mine.carrier != null and mine.carrier.team != u.team:
-			return {"pos": mine.carrier.global_position, "unit": mine.carrier, "kind": "chase"}
-		if not mine.at_home and mine.carrier == null and not mine.in_flight:
-			return {"pos": mine.pos, "unit": null, "kind": "move"}
-		var foe = nearest_enemy(u, 9.0)
-		if foe:
-			return {"pos": foe.global_position, "unit": foe, "kind": "chase"}
-		return {"pos": mine.home + Vector2(0, 3), "unit": null, "kind": "move"}
-	if u.role == "escort":
-		if theirs.carrier != null and theirs.carrier.team == u.team:
-			return {"pos": theirs.carrier.global_position, "unit": theirs.carrier, "kind": "chase"}
-		if theirs.carrier == null and not theirs.in_flight:
-			return {"pos": theirs.pos, "unit": null, "kind": "move"}
-		var foe2 = nearest_enemy(u, 12.0)
-		return {"pos": foe2.global_position, "unit": foe2, "kind": "chase"} if foe2 else {"pos": Balance.NODES["isle"], "unit": null, "kind": "move"}
-	if u.role == "raid":
-		if theirs.carrier == null and not theirs.in_flight:
-			return {"pos": theirs.pos, "unit": null, "kind": "move"}
-		if theirs.carrier != null and theirs.carrier.team == u.team:
-			return {"pos": theirs.carrier.global_position, "unit": theirs.carrier, "kind": "chase"}
-		if mine.carrier != null and mine.carrier.team != u.team:
-			return {"pos": mine.carrier.global_position, "unit": mine.carrier, "kind": "chase"}
-		return {"pos": Balance.NODES["isle"], "unit": null, "kind": "move"}
-	var foe3 = nearest_enemy(u, 16.0)
-	if foe3:
-		return {"pos": foe3.global_position, "unit": foe3, "kind": "chase"}
-	return {"pos": Balance.NODES["isle"], "unit": null, "kind": "move"}
+	if mine.carrier != null and mine.carrier.team != u.team:
+		return {"pos": mine.carrier.global_position, "unit": mine.carrier, "kind": "chase"}
+	if theirs.carrier != null:
+		return {"pos": theirs.carrier.global_position, "unit": theirs.carrier, "kind": "chase"}
+	if not theirs.in_flight:
+		return {"pos": theirs.pos, "unit": null, "kind": "move"}
+	return {"pos": theirs.home, "unit": null, "kind": "move"}
 
 
 func _hold_job(u, fresh: Dictionary) -> Dictionary:

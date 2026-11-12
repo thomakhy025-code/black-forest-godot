@@ -61,6 +61,7 @@ var wish := Vector2.ZERO
 var click_target = null
 var bot_lock = null
 var bot_stuck := false
+var bot_stuck_time := 0.0
 var bot_slide := 1.0
 var bot_slide_wait := 0.0
 var bot_corner := ""
@@ -430,9 +431,16 @@ func _note_stuck(dt: float) -> void:
 	var walking := wish.length_squared() > 0.2
 	bot_mark = global_position
 	bot_mark_t = 0.4
-	if walking and moved < 0.1:
-		bot_stuck = true
-		bot_lock = null
+	if walking and moved < 0.15:
+		bot_stuck_time += 0.4
+		if bot_stuck_time >= 1.6:
+			bot_stuck = true
+			bot_lock = null
+			bot_stuck_time = 0.0
+			if sim != null and sim.has_method("drop_route"):
+				sim.drop_route(self)
+	else:
+		bot_stuck_time = 0.0
 
 
 func _bot_slide(sp: float, before: Vector2) -> void:

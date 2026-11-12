@@ -108,6 +108,7 @@ static func on_respawn(u) -> void:
 	u.equip_weapon("none", false)
 	u.bot_lock = null
 	u.bot_stuck = false
+	u.bot_stuck_time = 0.0
 	u.bot_corner = ""
 	u.bot_mark_t = 0.0
 
@@ -203,27 +204,33 @@ static func machines_ready(match_node, team: int) -> bool:
 	return bool(sword.get("built", false)) and bool(wand.get("built", false))
 
 
+static func base_ready(match_node, team: int) -> bool:
+	return machines_ready(match_node, team) and gates_ready(match_node, team)
+
+
+static func gates_ready(match_node, team: int) -> bool:
+	for w in match_node.walls:
+		if str(w.get("kind", "")) != "door" or int(w.get("team", -1)) != team:
+			continue
+		if float(w.get("hp", 0.0)) + 0.01 < float(w.get("max", 1.0)):
+			return false
+	return true
+
+
 static func bot_goal(match_node, u) -> Dictionary:
 	if u.dead or u.carrying != null:
 		return {}
 	if not machines_ready(match_node, int(u.team)):
 		return _team_supply(match_node, u)
+	if not gates_ready(match_node, int(u.team)):
+		var door_job: Dictionary = _door_job(match_node, u)
+		if not door_job.is_empty():
+			return door_job
 	if str(u.weapon) == "none":
-		var drop = _nearest_drop(match_node, u.global_position, 18.0)
-		if drop != null:
-			return {"pos": drop["pos"], "unit": null, "kind": "drop", "ref": drop}
-	var own = _forge_for(match_node, int(u.team), _wanted(u))
-	var foe = _forge_for(match_node, 1 - int(u.team), _wanted(u))
-	if str(u.weapon) == "none" and own != null:
-		var own_d: float = u.global_position.distance_to(own["pos"])
-		if foe != null and bool(foe.get("built", false)):
-			var foe_d: float = u.global_position.distance_to(foe["pos"])
-			if foe_d + 0.5 < own_d:
-				return {"pos": foe["pos"], "unit": null, "kind": "forge", "ref": foe}
-		if bool(own.get("built", false)):
+		var own = _forge_for(match_node, int(u.team), _wanted(u))
+		if own != null and bool(own.get("built", false)):
 			return {"pos": own["pos"], "unit": null, "kind": "forge", "ref": own}
-		return _carry_job(match_node, u, own)
-	return _door_job(match_node, u)
+	return {}
 
 
 static func lock_ok(match_node, u, lock: Dictionary) -> bool:
@@ -247,7 +254,7 @@ static func lock_ok(match_node, u, lock: Dictionary) -> bool:
 		if ref == null:
 			return false
 		if bool(ref.get("built", false)):
-			if str(u.weapon) != "none" or not machines_ready(match_node, int(u.team)):
+			if str(u.weapon) != "none" or not gates_ready(match_node, int(u.team)):
 				return false
 		elif not _holding_for(u, ref):
 			return false
@@ -304,7 +311,7 @@ static func _open_machine(match_node, u):
 static func bot_act(match_node, u) -> void:
 	if u.dead or u.carrying != null or u.channel != null or u.cast != null:
 		return
-	if machines_ready(match_node, int(u.team)) and match_node.nearest_enemy(u, 2.5) != null:
+	if base_ready(match_node, int(u.team)) and match_node.nearest_enemy(u, 2.5) != null:
 		return
 	if u.attack_cd <= 0.0:
 		var shape: Dictionary = u.swing_shape()

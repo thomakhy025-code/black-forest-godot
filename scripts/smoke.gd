@@ -120,10 +120,32 @@ func _ready() -> void:
 	nia.force_update_transform()
 	nia.bot_corner = ""
 	var around: Vector2 = match_node.steer_point(nia, Vector2(7.5, 17.2))
+	var around_again: Vector2 = match_node.steer_point(nia, Vector2(7.5, 17.2))
 	_check("around the wall", around.y < 13.2 or around.x > 21.0)
+	_check("route stays", around.distance_to(around_again) < 0.2)
 	nia.global_position = outside
 	nia.bot_corner = ""
+	match_node.drop_route(nia)
 	nia.force_update_transform()
+	for forge in match_node.forges:
+		if int(forge.get("team", -1)) == 0:
+			forge["built"] = true
+	for w in match_node.walls:
+		if str(w.get("kind", "")) == "door" and int(w.get("team", -1)) == 0:
+			w["hp"] = float(w.get("max", 70.0))
+	joss.equip_weapon("sword", false)
+	joss.bot_lock = null
+	var raid: Dictionary = match_node.bot_goal(joss)
+	var raid_at: Vector2 = raid.get("pos", Vector2.ZERO)
+	_check("steals the diamond", raid_at.x > 60.0)
+	joss.equip_weapon("none", false)
+	joss.bot_lock = null
+	for forge2 in match_node.forges:
+		if int(forge2.get("team", -1)) == 0:
+			forge2["built"] = false
+	for w2 in match_node.walls:
+		if str(w2.get("kind", "")) == "door" and int(w2.get("team", -1)) == 0:
+			w2["hp"] = 0.0
 	if job_kind == "node":
 		var stand: Vector2 = match_node.stand_point(joss, job_pos)
 		_check("stands off the trunk", stand.distance_to(job_pos) > 0.45)
