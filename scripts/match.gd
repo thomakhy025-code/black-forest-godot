@@ -477,6 +477,25 @@ func steer_point(u, goal: Vector2) -> Vector2:
 		if u.global_position.distance_to(gate) > 0.85:
 			u.bot_corner = ""
 			return gate
+	if not _inside_yard(u.global_position, u.team) and _inside_yard(goal, u.team):
+		var gate_in := _yard_exit(u.team)
+		var hub := _yard_hub(u.team)
+		if u.global_position.distance_to(gate_in) > 2.2 and _walk_clear(u, gate_in):
+			u.bot_corner = ""
+			return gate_in
+		if _walk_clear(u, hub):
+			u.bot_corner = ""
+			return hub
+	if _inside_yard(u.global_position, u.team) and _inside_yard(goal, u.team):
+		# The outside path node is closer than the courtyard, so a fresh path
+		# turns a robot around in the doorway. Stay inside and walk to the goal.
+		u.bot_corner = ""
+		if _walk_clear(u, goal):
+			return goal
+		var hub := _yard_hub(u.team)
+		if u.global_position.distance_to(hub) > 0.8 and _walk_clear(u, hub):
+			return hub
+		return goal
 	if _walk_clear(u, goal):
 		u.bot_corner = ""
 		return goal
@@ -487,41 +506,73 @@ func steer_point(u, goal: Vector2) -> Vector2:
 		var start := _path_start(u)
 		path = Balance.astar(start, goal_id)
 		_steer[u.unit_id] = {"from": start, "to": goal_id, "path": path}
-		u.bot_corner = ""
+		if not path.has(str(u.bot_corner)):
+			u.bot_corner = ""
 	return _follow_path(u, path, goal)
 
 
 func drop_route(u) -> void:
 	_steer.erase(u.unit_id)
-	u.bot_corner = ""
 
 
 func _follow_path(u, path: Array, goal: Vector2) -> Vector2:
-	var idx := 0
+	# Stay on one corner until the bot is standing on it and can see the
+	# next one. Leaving early aims through the castle wall, the step fails,
+	# and the robot walks back to the previous corner.
+	if path.is_empty():
+		u.bot_corner = ""
+		return goal
 	var held := str(u.bot_corner)
-	if held != "" and path.has(held):
-		idx = path.find(held)
-		var held_at: Vector2 = Balance.NODES[held]
-		if u.global_position.distance_to(held_at) > 1.2:
-			return held_at
-		idx = mini(idx + 1, path.size() - 1)
-	for i in range(idx, path.size()):
-		var id := str(path[i])
+	if held == "" or not path.has(held):
+		var best_i := 0
+		var best_cost := 1.0e12
+		var found := false
+		for i in path.size():
+			var candidate: Vector2 = Balance.NODES[str(path[i])]
+			if not _walk_clear(u, candidate):
+				continue
+			var cost: float = u.global_position.distance_to(candidate) + candidate.distance_to(goal)
+			if cost < best_cost:
+				best_cost = cost
+				best_i = i
+				found = true
+		held = str(path[best_i]) if found else str(path[0])
+		u.bot_corner = held
+	var idx: int = path.find(held)
+	var here: Vector2 = Balance.NODES[held]
+	var next_at := here
+	var next_id := held
+	if idx + 1 < path.size():
+		next_id = str(path[idx + 1])
+		next_at = Balance.NODES[next_id]
+	var arrived: bool = u.global_position.distance_to(here) <= 0.7
+	if arrived and next_id != held and _walk_clear(u, next_at):
+		u.bot_corner = next_id
+		return next_at
+	if _walk_clear(u, here):
+		return here
+	u.bot_corner = ""
+	var fallback := ""
+	var fallback_cost := 1.0e12
+	for raw in path:
+		var id := str(raw)
 		var n: Vector2 = Balance.NODES[id]
-		if u.global_position.distance_to(n) < 1.2:
+		if not _walk_clear(u, n):
 			continue
-		if _walk_clear(u, n):
-			u.bot_corner = id
-			return n
+		var cost: float = u.global_position.distance_to(n) + n.distance_to(goal)
+		if cost < fallback_cost:
+			fallback_cost = cost
+			fallback = id
+	if fallback != "":
+		u.bot_corner = fallback
+		return Balance.NODES[fallback]
 	if _inside_yard(goal, u.team) and not _inside_yard(u.global_position, u.team):
 		u.bot_corner = ""
 		return _outside_flank(u)
-	if idx < path.size():
-		var last := str(path[idx])
-		u.bot_corner = last
-		return Balance.NODES[last]
-	u.bot_corner = ""
-	return goal
+	if _walk_clear(u, goal):
+		u.bot_corner = ""
+		return goal
+	return here
 
 
 func _path_start(u) -> String:
@@ -575,19 +626,54 @@ func stand_point(u, goal: Vector2) -> Vector2:
 	var reach: float = Balance.FIST_RANGE + float(best.get("r", 0.35))
 	if u.global_position.distance_to(center) <= reach:
 		return u.global_position
-	var approach := Vector2.RIGHT if int(u.team) == 0 else Vector2.LEFT
-	return center + approach * clampf(reach * 0.82, 0.55, reach)
+	var gap := clampf(float(best.get("r", 0.35)) + 0.35, 0.55, reach)
+	var prefer := Vector2.RIGHT if int(u.team) == 0 else Vector2.LEFT
+	for side in [prefer, -prefer, Vector2.UP, Vector2.DOWN]:
+		var at: Vector2 = center + side * gap
+		if not blocked_circle(at, float(u.radius) * 0.85, int(u.team)):
+			return at
+	return center + prefer * gap
 
 
 func _walk_clear(u, goal: Vector2) -> bool:
-	if not los(u.global_position, goal, u.team):
+	var origin: Vector2 = u.global_position
+	if _cuts_wall(origin, goal, float(u.radius)):
 		return false
-	var a: Vector2 = u.global_position
-	var step: Vector2 = (goal - a) / 3.0
-	for i in 2:
-		if blocked_circle(a + step * float(i + 1), float(u.radius) * 0.9, u.team):
+	if not los(origin, goal, u.team):
+		return false
+	var step: Vector2 = (goal - origin) / 5.0
+	for i in 4:
+		if blocked_circle(origin + step * float(i + 1), float(u.radius), u.team):
 			return false
 	return true
+
+
+func _cuts_wall(a: Vector2, b: Vector2, radius: float) -> bool:
+	for w in walls:
+		if str(w.get("kind", "")) == "door" and float(w.get("hp", 0.0)) <= 0.0:
+			continue
+		var rect: Rect2 = w["rect"]
+		if _cuts_rect(a, b, rect.grow(radius)):
+			return true
+	return false
+
+
+func _cuts_rect(a: Vector2, b: Vector2, rect: Rect2) -> bool:
+	if rect.has_point(a) or rect.has_point(b):
+		return true
+	var p: Vector2 = rect.position
+	var q: Vector2 = rect.end
+	var top := Vector2(q.x, p.y)
+	var left := Vector2(p.x, q.y)
+	if Geometry2D.segment_intersects_segment(a, b, p, top) != null:
+		return true
+	if Geometry2D.segment_intersects_segment(a, b, top, q) != null:
+		return true
+	if Geometry2D.segment_intersects_segment(a, b, q, left) != null:
+		return true
+	if Geometry2D.segment_intersects_segment(a, b, left, p) != null:
+		return true
+	return false
 
 
 func _inside_yard(pos: Vector2, team: int) -> bool:
@@ -597,6 +683,10 @@ func _inside_yard(pos: Vector2, team: int) -> bool:
 
 func _yard_exit(team: int) -> Vector2:
 	return Vector2(22.8, 25.5) if team == 0 else Vector2(65.2, 25.5)
+
+
+func _yard_hub(team: int) -> Vector2:
+	return Vector2(14.0, 25.5) if team == 0 else Vector2(74.0, 25.5)
 
 
 func _node_seeing(goal: Vector2, team: int) -> String:
@@ -689,7 +779,8 @@ func _hold_job(u, fresh: Dictionary) -> Dictionary:
 		u.bot_stuck = false
 		return fresh
 	var lock = u.bot_lock
-	if not u.bot_stuck and lock is Dictionary and Supply.lock_ok(self, u, lock):
+	if lock is Dictionary and Supply.lock_ok(self, u, lock):
+		u.bot_stuck = false
 		return lock
 	u.bot_stuck = false
 	u.bot_lock = fresh

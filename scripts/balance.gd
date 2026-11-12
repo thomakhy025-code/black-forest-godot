@@ -127,7 +127,9 @@ const NODES := {
 	"isleW": Vector2(38, 24), "isle": Vector2(44.1, 25.2), "isleE": Vector2(50, 26),
 	"sW": Vector2(31, 42.6), "bridgeSW": Vector2(38, 42.6), "bridgeS": Vector2(44, 38.9),
 	"bridgeSE": Vector2(50, 42.6), "sE": Vector2(57, 42.6),
-	"eOut": Vector2(63, 25.5), "eIn": Vector2(74, 25.5), "eDia": Vector2(79, 20), "eVault": Vector2(78, 33)
+	"eOut": Vector2(63, 25.5), "eIn": Vector2(74, 25.5), "eDia": Vector2(79, 20), "eVault": Vector2(78, 33),
+	"eN": Vector2(74, 9.1), "eNE": Vector2(86, 11), "eBack": Vector2(86, 25.5),
+	"eSE": Vector2(86, 39.2), "eS": Vector2(74, 42.6)
 }
 
 const GRAPH := {
@@ -135,9 +137,11 @@ const GRAPH := {
 	"wIn": ["wDia", "wVault", "wOut"],
 	"wOut": ["wIn", "nW", "sW", "isleW"],
 	"nW": ["wOut", "bridgeNW"], "bridgeNW": ["nW", "bridgeN"], "bridgeN": ["bridgeNW", "bridgeNE"],
-	"bridgeNE": ["bridgeN", "nE"], "nE": ["bridgeNE", "eOut"],
+	"bridgeNE": ["bridgeN", "nE"], "nE": ["bridgeNE", "eOut", "eN"],
 	"sW": ["wOut", "bridgeSW"], "bridgeSW": ["sW", "bridgeS"], "bridgeS": ["bridgeSW", "bridgeSE"],
-	"bridgeSE": ["bridgeS", "sE"], "sE": ["bridgeSE", "eOut"],
+	"bridgeSE": ["bridgeS", "sE"], "sE": ["bridgeSE", "eOut", "eS"],
+	"eN": ["nE", "eNE"], "eNE": ["eN", "eBack"], "eBack": ["eNE", "eSE"],
+	"eSE": ["eBack", "eS"], "eS": ["eSE", "sE"],
 	"isleW": ["wOut", "isle"], "isle": ["isleW", "isleE"], "isleE": ["isle", "eOut"],
 	"eOut": ["nE", "sE", "isleE", "eIn"],
 	"eIn": ["eOut", "eDia", "eVault"],

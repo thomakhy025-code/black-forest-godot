@@ -433,12 +433,12 @@ func _note_stuck(dt: float) -> void:
 	bot_mark_t = 0.4
 	if walking and moved < 0.15:
 		bot_stuck_time += 0.4
-		if bot_stuck_time >= 1.6:
+		if bot_stuck_time >= 1.6 and bot_stuck_time < 2.0 and sim != null and sim.has_method("drop_route"):
+			sim.drop_route(self)
+		if bot_stuck_time >= 8.0:
 			bot_stuck = true
 			bot_lock = null
 			bot_stuck_time = 0.0
-			if sim != null and sim.has_method("drop_route"):
-				sim.drop_route(self)
 	else:
 		bot_stuck_time = 0.0
 
