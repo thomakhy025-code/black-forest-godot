@@ -300,7 +300,7 @@ func _build_armory() -> void:
 	status_label = _title_label("", 14)
 	status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	col.add_child(status_label)
-	var note := _title_label("You spawn unarmed. Press E at a Sword Forge or a Wand Forge inside either keep. The fiery sword swings a 120 degree arc, 1 m, for 15 damage once a second. The wand strikes a 6 m by 4 m line for 10 damage once a second. Carrying a diamond is half speed and no attacks.", 14)
+	var note := _title_label("You spawn unarmed. Press E at a Sword Forge or a Wand Forge inside either keep. The fiery sword swings a 120 degree arc, 1 m, for 15 damage once a second. Its skills are Fire Sword, Lightning Quick Move, and Lightsaber Beam. The wand strikes a 6 m by 4 m line for 10 damage once a second. Carrying a diamond is half speed and no attacks.", 14)
 	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	col.add_child(note)
 	var actions := HBoxContainer.new()

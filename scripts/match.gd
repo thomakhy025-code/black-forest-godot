@@ -1143,7 +1143,7 @@ func begin_saber(u) -> void:
 	ch.len = Balance.SABER_LEN
 	ch.w = Balance.SABER_W
 	u.channel = ch
-	float_at(u.global_position + Vector2(0, -0.9), "SABER", Color(1, 0.88, 0.54))
+	float_at(u.global_position + Vector2(0, -0.9), "BEAM", Color(1, 0.88, 0.2))
 
 
 func detonate_mega(u, ch) -> void:
@@ -1168,7 +1168,7 @@ func detonate_saber(u, ch) -> void:
 	for o in units:
 		if o.dead or o == u:
 			continue
-		if not in_saber_lane(ch, o.global_position):
+		if not in_saber_lane(ch, o.global_position, o.radius):
 			continue
 		try_hit(o, Balance.SABER_DAMAGE, u, Color(1, 0.88, 0.54))
 	if not headless_server:
@@ -1184,12 +1184,30 @@ func detonate_saber(u, ch) -> void:
 	_sfx("saber")
 
 
-func in_saber_lane(ch, pos: Vector2) -> bool:
+func in_saber_lane(ch, pos: Vector2, rad: float = 0.0) -> bool:
 	var fwd := Vector2(cos(ch.ang), sin(ch.ang))
 	var delta: Vector2 = pos - ch.pos
 	var along: float = delta.dot(fwd)
 	var side := absf(Vector2(-fwd.y, fwd.x).dot(delta))
-	return along >= -0.0001 and along <= float(ch.len) + 0.0001 and side <= float(ch.w) * 0.5 + 0.0001
+	return along >= -rad and along <= float(ch.len) + rad and side <= float(ch.w) * 0.5 + rad
+
+
+func saber_worth(u) -> bool:
+	var lane := State.new()
+	lane.pos = u.global_position
+	lane.ang = u.facing
+	lane.len = Balance.SABER_LEN
+	lane.w = Balance.SABER_W
+	var foe := false
+	for o in units:
+		if o == u or o.dead:
+			continue
+		if not in_saber_lane(lane, o.global_position, o.radius):
+			continue
+		if int(o.team) == int(u.team):
+			return false
+		foe = true
+	return foe
 
 
 func finish_cast(u) -> void:
@@ -1206,11 +1224,12 @@ func finish_cast(u) -> void:
 	elif skill_name == "ice":
 		spawn_clones(u)
 	elif skill_name == "ignite":
-		_cast_strike(u, _arc_shape(Balance.IGNITE_RANGE, Balance.IGNITE_ARC), Balance.IGNITE_DAMAGE, Balance.IGNITE_BURN_DPS, Balance.IGNITE_BURN_TIME)
+		u.fire_sword_t = Balance.FIRE_SWORD_TIME
+		u.fire_sword_hits = Balance.FIRE_SWORD_HITS
+		u.apply_swing_fields(u.swing_shape())
+		float_at(u.global_position + Vector2(0, -0.9), "FIRE SWORD", Color(1, 0.55, 0.16))
 	elif skill_name == "spark":
-		_cast_strike(u, _rect_shape(Balance.SPARK_LEN, Balance.SPARK_W), Balance.SPARK_DAMAGE, 0.0, 0.0)
-	elif skill_name == "ember":
-		_cast_strike(u, _arc_shape(Balance.EMBER_RANGE, Balance.EMBER_ARC), Balance.EMBER_DAMAGE, Balance.EMBER_BURN_DPS, Balance.EMBER_BURN_TIME)
+		start_dash(u)
 
 
 func _arc_shape(reach: float, arc: float) -> Dictionary:
@@ -1291,7 +1310,7 @@ func spawn_clones(u) -> void:
 
 
 func start_dash(u) -> void:
-	var dur: float = 0.25 * (1.0 - 0.005 * float(u.stats.get("spd", 0)))
+	var dur := Balance.DASH_TIME
 	var dash := State.new()
 	dash.t = dur
 	dash.dur = dur
@@ -1308,24 +1327,21 @@ func start_dash(u) -> void:
 func strike_dash(u) -> void:
 	if u.dash == null:
 		return
-	var dmg: float = 10.0 * Balance.pwr_mul(u.stats)
+	var dmg := Balance.LIGHTNING_DAMAGE
 	var a: Vector2 = u.dash.from_pos
 	var b: Vector2 = u.global_position
 	for o in units:
 		if o.dead or o.team == u.team or u.dash.hit.has(o.unit_id):
 			continue
-		if _seg_dist(o.global_position, a, b) > Balance.DASH_REACH:
+		if _seg_dist(o.global_position, a, b) > Balance.DASH_REACH + o.radius:
 			continue
 		u.dash.hit[o.unit_id] = true
-		if try_hit(o, dmg, u, Color(1, 0.96, 0.66)):
-			o.shock = maxf(o.shock, 1.0)
-			o.slow_cast = maxf(o.slow_cast, 5.0)
-			float_at(o.global_position + Vector2(0, -0.9), "SHOCK", Color(1, 0.96, 0.66))
+		try_hit(o, dmg, u, Color(1, 0.96, 0.66))
 	for owner in units:
 		for c in owner.clones:
 			if not c.alive or c.team == u.team or u.dash.hit.has(c.id):
 				continue
-			if _seg_dist(c.pos, a, b) > Balance.DASH_REACH:
+			if _seg_dist(c.pos, a, b) > Balance.DASH_REACH + float(c.r):
 				continue
 			u.dash.hit[c.id] = true
 			damage_clone(c, dmg)
@@ -1338,7 +1354,20 @@ func resolve_swing(u) -> void:
 	if str(shape.get("kind", "")) == "none":
 		return
 	_sfx("swing_fire" if str(u.weapon) == "sword" else "swing")
-	strike_area(u, u.global_position, u.facing, shape, weapon_damage(u), 0.0, 0.0)
+	var dmg := weapon_damage(u)
+	var burn_dps := 0.0
+	var burn_t := 0.0
+	var empowered: bool = str(u.weapon) == "sword" and u.fire_sword_t > 0.0 and u.fire_sword_hits > 0
+	if empowered:
+		dmg *= 2.0
+		burn_dps = Balance.FIRE_SWORD_BURN
+		burn_t = Balance.FIRE_SWORD_BURN_TIME
+	var landed: int = strike_area(u, u.global_position, u.facing, shape, dmg, burn_dps, burn_t)
+	if empowered and landed > 0:
+		u.fire_sword_hits = maxi(0, int(u.fire_sword_hits) - landed)
+		if u.fire_sword_hits <= 0:
+			u.fire_sword_t = 0.0
+			u.apply_swing_fields(u.swing_shape())
 	Supply.chop(self, u)
 	for c2 in u.clones:
 		if c2.alive:
@@ -1365,14 +1394,18 @@ func weapon_damage(u) -> float:
 	return base * Balance.pwr_mul(u.stats)
 
 
-func strike_area(u, origin: Vector2, facing: float, shape: Dictionary, dmg: float, burn_dps: float, burn_t: float) -> void:
+func strike_area(u, origin: Vector2, facing: float, shape: Dictionary, dmg: float, burn_dps: float, burn_t: float) -> int:
 	var tint := Color(1, 0.55, 0.16) if str(u.weapon) == "sword" else Color(0.65, 0.85, 1)
+	var landed := 0
 	for o in units:
 		if o.dead or o.team == u.team:
 			continue
 		if not _in_shape(origin, facing, o.global_position, o.radius, shape):
 			continue
-		if try_hit(o, dmg, u, tint) and burn_dps > 0.0:
+		if not try_hit(o, dmg, u, tint):
+			continue
+		landed += 1
+		if burn_dps > 0.0:
 			var burn := State.new()
 			burn.dps = burn_dps
 			burn.t = burn_t
@@ -1411,6 +1444,7 @@ func strike_area(u, origin: Vector2, facing: float, shape: Dictionary, dmg: floa
 		if not _in_shape(origin, facing, k["pos"], float(k["r"]), shape):
 			continue
 		hurt_keep(k, dmg)
+	return landed
 
 
 func _in_shape(origin: Vector2, facing: float, pos: Vector2, rad: float, shape: Dictionary) -> bool:
@@ -1478,6 +1512,8 @@ func kill_unit(u, src) -> void:
 	u.flight = null
 	u.channel = null
 	u.hop = null
+	u.fire_sword_t = 0.0
+	u.fire_sword_hits = 0
 	for c in u.clones:
 		if c.node and is_instance_valid(c.node):
 			c.node.queue_free()
@@ -2347,6 +2383,9 @@ func pack_net_bytes(ack: Dictionary) -> PackedByteArray:
 		if u.guard:
 			flags |= 2
 		flags |= Balance.flags_for_weapon(str(u.weapon))
+		if u.fire_sword_t > 0.0 and u.fire_sword_hits > 0:
+			flags |= 16
+			flags |= (mini(int(u.fire_sword_hits), 7) << 5)
 		buf.put_float(u.global_position.x)
 		buf.put_float(u.global_position.y)
 		buf.put_float(u.facing)
@@ -2558,6 +2597,8 @@ func _net_pose(u) -> int:
 func _net_skill(u) -> int:
 	if u.channel != null and str(u.channel.kind) == "mega":
 		return 6
+	if u.channel != null and str(u.channel.kind) == "saber":
+		return 3
 	if u.cast == null:
 		return 0
 	var found := Balance.NET_SKILL_IDS.find(str(u.cast.name))
@@ -2595,16 +2636,33 @@ func _note_remote_skill(u, skill: int, pos: Vector2, facing: float) -> void:
 			_sfx(cue)
 	if prev == 0 or skill != 0:
 		return
+	if prev == 3:
+		_spawn_remote_saber(pos, facing)
+		_sfx("saber")
+		return
 	if prev < 0 or prev >= Balance.NET_SKILL_IDS.size():
 		return
 	_spawn_skill_fx_at(str(Balance.NET_SKILL_IDS[prev]), pos, facing)
 
 
+func _spawn_remote_saber(pos: Vector2, facing: float) -> void:
+	if headless_server:
+		return
+	var fx := State.new()
+	fx.pos = pos
+	fx.ang = facing
+	fx.len = Balance.SABER_LEN
+	fx.w = Balance.SABER_W
+	fx.t = 0.9
+	fx.dur = 0.9
+	saber_fx.append(fx)
+
+
 func _remote_skill_sfx(skill: int) -> String:
-	if skill == 1 or skill == 2:
-		return "swing_fire"
-	if skill == 3:
+	if skill == 1:
 		return "firesword"
+	if skill == 2:
+		return "lightning"
 	if skill == 4:
 		return "fireball"
 	if skill == 5:
@@ -2687,6 +2745,17 @@ func apply_net_snapshot(blob: Dictionary) -> void:
 		var flags := int(row[6])
 		var pose := int(row[7])
 		u.net_pose = pose
+		var charges := (flags >> 5) & 7
+		var buffed := (flags & 16) != 0 and charges > 0
+		var buff_changed: bool = buffed != (u.fire_sword_t > 0.0) or (buffed and u.fire_sword_hits != charges)
+		if buffed:
+			u.fire_sword_t = 1.0
+			u.fire_sword_hits = charges
+		else:
+			u.fire_sword_t = 0.0
+			u.fire_sword_hits = 0
+		if buff_changed:
+			u.apply_swing_fields(u.swing_shape())
 		if prev_pose != 2 and pose == 2:
 			_sfx("swing_fire" if str(u.weapon) == "sword" else "swing")
 		if (flags & 1) != 0 and not was_dead:

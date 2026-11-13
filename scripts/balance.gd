@@ -26,19 +26,12 @@ const SWORD_ARC := PI * 120.0 / 180.0
 const ATTACK_INTERVAL := 1.0
 const WAND_LEN := 6.0
 const WAND_W := 4.0
-const IGNITE_RANGE := 2.2
-const IGNITE_ARC := PI
-const IGNITE_DAMAGE := 22.0
-const IGNITE_BURN_DPS := 5.0
-const IGNITE_BURN_TIME := 3.0
-const SPARK_LEN := 8.0
-const SPARK_W := 3.0
-const SPARK_DAMAGE := 18.0
-const EMBER_RANGE := 2.5
-const EMBER_ARC := PI * 120.0 / 180.0
-const EMBER_DAMAGE := 8.0
-const EMBER_BURN_DPS := 8.0
-const EMBER_BURN_TIME := 4.0
+const FIRE_SWORD_RANGE := 1.5
+const FIRE_SWORD_ARC := PI
+const FIRE_SWORD_TIME := 8.0
+const FIRE_SWORD_HITS := 5
+const FIRE_SWORD_BURN := 5.0
+const FIRE_SWORD_BURN_TIME := 3.0
 const THROW_METERS := 1.0
 const THROW_SPEED := 8.0
 const CARRY_SPEED := 0.5
@@ -55,10 +48,12 @@ const MEGA_TIME := 2.5
 const MEGA_DAMAGE := 200.0
 const SABER_LEN := 15.0
 const SABER_W := 4.0
-const SABER_TIME := 1.5
+const SABER_TIME := 3.0
 const SABER_DAMAGE := 75.0
-const DASH_DIST := 4.0
-const DASH_REACH := 1.9
+const DASH_DIST := 8.0
+const DASH_TIME := 0.25
+const DASH_REACH := 0.48
+const LIGHTNING_DAMAGE := 10.0
 const FIREBALL_DIRECT := 30.0
 const FIREBALL_SPLASH := 10.0
 const FIREBALL_SPLASH_R := 1.6
@@ -89,16 +84,16 @@ const WEAPON_KITS := {
 
 const SKILLS := {
 	"ignite": {
-		"name": "Ignition Swipe", "pool": "sword", "key": "1", "cast": 0.15, "cd": 8.0, "mp": 0.25,
-		"blurb": "A rooted 180 degree swipe, 2.2 m. 22 damage and 5 burn DPS for 3 seconds."
+		"name": "Fire Sword", "pool": "sword", "key": "1", "cast": 0.1, "cd": 15.0, "mp": 0.3,
+		"blurb": "Enchants your blade for 8 seconds, or until 5 hits land. Each swing is a 180 degree cleave at 1.5 m, deals double damage, and burns for 5 damage per second for 3 seconds. 30% MP. 15s cooldown."
 	},
 	"spark": {
-		"name": "Horizontal Spark Slash", "pool": "sword", "key": "2", "cast": 0.2, "cd": 12.0, "mp": 0.3,
-		"blurb": "A rooted slash 8 m long and 3 m wide. 18 damage."
+		"name": "Lightning Quick Move", "pool": "sword", "key": "2", "cast": 0.5, "cd": 5.0, "mp": 0.1,
+		"blurb": "After 0.5s, dash 8 m in the direction you are facing. 0.25s, passes through enemies, 10 lightning damage, and you cannot be hit during the dash. 10% MP. 5s cooldown."
 	},
 	"ember": {
-		"name": "Ember Burn", "pool": "sword", "key": "3", "cast": 0.3, "cd": 14.0, "mp": 0.35,
-		"blurb": "120 degree arc, 2.5 m. 8 damage and a lingering burn, 8 DPS for 4 seconds."
+		"name": "Lightsaber Beam", "pool": "sword", "key": "3", "cast": 3.0, "cd": 24.0, "mp": 0.0, "mp_flat": 50.0,
+		"blurb": "Channel 3s. You cannot move, attack, or use other skills. A pale yellow 15 m by 4 m lane warns the whole time, then deals 75 damage to everyone in it, teammates included. 50 MP. 24s cooldown."
 	},
 	"fireball": {
 		"name": "Fireball", "pool": "magic", "key": "1", "cast": 0.5, "cd": 8.0, "mp": 0.25,
@@ -115,7 +110,7 @@ const SKILLS := {
 }
 
 const SHORT := {
-	"ignite": "Ignite", "spark": "Spark", "ember": "Ember",
+	"ignite": "Fire", "spark": "Bolt", "ember": "Beam",
 	"fireball": "Fire", "ice": "Ice", "mega": "Boom"
 }
 

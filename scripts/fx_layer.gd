@@ -3,9 +3,11 @@ extends Node2D
 ## on screen. No per-flame buffer, particle, or extra canvas item.
 
 const Balance = preload("res://scripts/balance.gd")
+const State = preload("res://scripts/state.gd")
 const ART := "res://assets/art/fighters/game/"
 
 var sim: Node = null
+var _lane = null
 var _font: Font
 var _drawing := false
 var _dot := PackedVector2Array([
@@ -89,12 +91,13 @@ func _draw() -> void:
 			_gem(s.pos)
 	for u in sim.units:
 		var skill := _live_skill(u)
+		var beam = _beam_lane(u)
 		if skill == "mega":
 			_mega_ring(u)
+		elif beam != null:
+			_saber(beam, Color(1.0, 0.97, 0.62, 0.28), Color(1.0, 0.82, 0.02, 1.0), Color(1.0, 0.95, 0.75, 0.35))
 		elif skill != "":
 			_prepare(u, skill)
-		elif u.channel != null and str(u.channel.kind) == "saber":
-			_saber(u.channel, Color(1.0, 0.92, 0.4, 0.34), Color(1.0, 0.86, 0.15, 0.95), Color(1.0, 1.0, 0.85, 0.95))
 	for fx in sim.mega_fx:
 		_blast(fx)
 	for cast_fx in sim.skill_fx:
@@ -201,9 +204,23 @@ func _saber(ch, fill: Color, edge: Color, core: Color) -> void:
 	_pent[2] = _quad[2]
 	_pent[3] = _quad[3]
 	_pent[4] = _quad[0]
-	draw_polyline(_pent, edge, 0.14, true)
-	draw_line((_quad[0] + _quad[3]) * 0.5, (_quad[1] + _quad[2]) * 0.5, core, 0.12, true)
-	draw_line(_quad[1], _quad[2], Color(1.0, 1.0, 0.9, edge.a), 0.18, true)
+	draw_polyline(_pent, edge, 0.28, true)
+	draw_line((_quad[0] + _quad[3]) * 0.5, (_quad[1] + _quad[2]) * 0.5, core, 0.1, true)
+	draw_line(_quad[1], _quad[2], Color(1.0, 0.9, 0.1, edge.a), 0.36, true)
+
+
+func _beam_lane(u):
+	if u.channel != null and str(u.channel.kind) == "saber":
+		return u.channel
+	if int(u.net_pose) != 4 or int(u.net_skill) != 3:
+		return null
+	if _lane == null:
+		_lane = State.new()
+	_lane.pos = u.global_position
+	_lane.ang = u.facing
+	_lane.len = Balance.SABER_LEN
+	_lane.w = Balance.SABER_W
+	return _lane
 
 
 func _load_art() -> void:
@@ -232,7 +249,7 @@ func _prepare(u, skill: String) -> void:
 	if skill == "ignite":
 		_paint(_art.get("ignite-prepare"), at + fwd * 0.8, Vector2(0.7, 0.7), 0.0, 0.95)
 	elif skill == "spark":
-		_paint(_art.get("spark-prepare"), at + fwd * 1.1, Vector2(0.85, 0.85), u.facing, 0.95)
+		draw_line(at, at + fwd * Balance.DASH_DIST, Color(0.75, 0.92, 1.0, 0.7), 0.14, true)
 	elif skill == "ember":
 		_paint(_art.get("ember-prepare"), at, Vector2(1.15, 0.75), 0.0, 0.9)
 	elif skill == "fireball":
@@ -287,17 +304,16 @@ func _strike(fx) -> void:
 	var size := Vector2(1.3, 1.3)
 	var rot := 0.0
 	if kind == "ignite":
-		size = Vector2(4.6, 4.4)
+		size = Vector2(1.5, 1.5)
 		rot = ang
-		at += fwd * 0.7
+		at += fwd * 0.45
 	elif kind == "spark":
-		size = Vector2(8.0, 2.7) if active else Vector2(6.4, 1.1)
+		size = Vector2(8.0, 0.45)
 		rot = ang
 		at += fwd * 4.0
 	elif kind == "ember":
-		size = Vector2(3.5, 2.6) if active else Vector2(2.9, 2.7)
-		rot = ang if active else 0.0
-		at += fwd * (1.5 if active else 0.9)
+		size = Vector2(1.6, 1.2)
+		rot = ang
 	elif kind == "ice":
 		size = Vector2(1.7, 1.45) if active else Vector2(1.35, 1.15)
 	_paint(_art.get("%s-%s" % [kind, stage]), at, size, rot, alpha)

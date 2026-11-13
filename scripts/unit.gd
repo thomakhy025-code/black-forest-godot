@@ -217,6 +217,7 @@ func tick(dt: float) -> void:
 		if fire_sword_t <= 0.0 or fire_sword_hits <= 0:
 			fire_sword_t = 0.0
 			fire_sword_hits = 0
+			apply_swing_fields(swing_shape())
 	if burn != null and float(burn.t) > 0.0:
 		if invuln <= 0.0:
 			hp -= sim.mitigated(self, float(burn.dps) * dt)
@@ -377,15 +378,25 @@ func tick_bot(dt: float) -> void:
 					has_cast_face = true
 					facing = cast_face
 					acted = try_cast("fireball")
+			if not acted and skills.get("ignite", false) and float(cds.get("ignite", 0.0)) <= 0.0 and fire_sword_t <= 0.0:
+				var near = sim.nearest_enemy(self, 8.0)
+				if near != null and sim.los(global_position, near.global_position, team):
+					facing = (near.global_position - global_position).angle()
+					acted = try_cast("ignite")
+			if not acted and skills.get("ember", false) and float(cds.get("ember", 0.0)) <= 0.0:
+				var beam = sim.nearest_enemy(self, 14.0)
+				if beam != null and global_position.distance_to(beam.global_position) > 2.4:
+					facing = (beam.global_position - global_position).angle()
+					if sim.saber_worth(self):
+						acted = try_cast("ember")
 			if not acted and skills.get("spark", false) and float(cds.get("spark", 0.0)) <= 0.0:
-				var slash = sim.nearest_enemy(self, 5.0)
-				if slash != null and global_position.distance_to(slash.global_position) > 1.2 and sim.los(global_position, slash.global_position, team):
-					facing = (slash.global_position - global_position).angle()
+				var gap = sim.nearest_enemy(self, 8.0)
+				if gap != null and global_position.distance_to(gap.global_position) > 1.6 and sim.los(global_position, gap.global_position, team):
+					cast_face = (gap.global_position - global_position).angle()
+					facing = cast_face
 					acted = try_cast("spark")
-			if not acted and foe != null and skills.get("ignite", false) and float(cds.get("ignite", 0.0)) <= 0.0:
-				acted = try_cast("ignite")
-			if not acted and foe != null and skills.get("ember", false) and float(cds.get("ember", 0.0)) <= 0.0:
-				acted = try_cast("ember")
+					if acted:
+						has_cast_face = true
 			if not acted and foe != null and attack_cd <= 0.0:
 				try_swing()
 			elif not acted and door != null and attack_cd <= 0.0:
@@ -412,7 +423,10 @@ func tick_bot(dt: float) -> void:
 		wish = delta / length
 	else:
 		wish = Vector2.ZERO
-	if cast != null and str(cast.name) == "fireball" and has_cast_face:
+	if channel != null and str(channel.kind) == "saber":
+		wish = Vector2.ZERO
+		facing = float(channel.ang)
+	elif cast != null and has_cast_face and (str(cast.name) == "fireball" or str(cast.name) == "spark"):
 		facing = cast_face
 	elif wish != Vector2.ZERO:
 		facing = wish.angle()
@@ -532,28 +546,31 @@ func try_cast(skill_name: String) -> bool:
 		if is_player:
 			sim.float_at(global_position + Vector2(0, -0.9), "NO MP", Color(0.73, 0.86, 1))
 		return false
-	if skill_name == "mega":
+	if skill_name == "mega" or skill_name == "ember":
 		mp -= cost
 		cds[skill_name] = float(def["cd"]) * Balance.cd_mul(stats)
-		sim.begin_mega(self)
-		_sfx("mega")
+		if skill_name == "mega":
+			sim.begin_mega(self)
+			_sfx("mega")
+		else:
+			sim.begin_saber(self)
 		return true
 	mp -= cost
 	var dur := cast_duration(skill_name)
 	cds[skill_name] = float(def["cd"]) * Balance.cd_mul(stats)
-	var rooted := skill_name == "ignite" or skill_name == "spark"
+	var slowed := skill_name == "fireball" or skill_name == "ice"
 	cast = State.new()
 	cast.name = skill_name
 	cast.t = dur
 	cast.dur = dur
-	cast.root = rooted
-	cast.slow = not rooted
+	cast.root = false
+	cast.slow = slowed
 	if skill_name == "fireball":
 		_sfx("fireball")
-	elif skill_name == "ignite" or skill_name == "ember":
+	elif skill_name == "ignite":
 		_sfx("firesword")
 	elif skill_name == "spark":
-		_sfx("swing_fire")
+		_sfx("lightning")
 	return true
 
 
@@ -612,6 +629,9 @@ func equip_weapon(kind: String, announce: bool = false) -> bool:
 	if weapon == kind and _kit_matches(kind):
 		return false
 	weapon = kind
+	if weapon != "sword":
+		fire_sword_t = 0.0
+		fire_sword_hits = 0
 	var kit: Array = Balance.WEAPON_KITS.get(weapon, [])
 	for id in Balance.SKILL_ORDER:
 		skills[id] = kit.has(id)
@@ -675,6 +695,8 @@ func swing_shape() -> Dictionary:
 	if weapon == "wand":
 		return {"kind": "rect", "range": Balance.WAND_LEN, "arc": 0.0, "len": Balance.WAND_LEN, "w": Balance.WAND_W}
 	if weapon == "sword":
+		if fire_sword_t > 0.0 and fire_sword_hits > 0:
+			return {"kind": "arc", "range": Balance.FIRE_SWORD_RANGE, "arc": Balance.FIRE_SWORD_ARC, "len": Balance.FIRE_SWORD_RANGE, "w": 0.0}
 		return {"kind": "arc", "range": Balance.SWORD_RANGE, "arc": Balance.SWORD_ARC, "len": Balance.SWORD_RANGE, "w": 0.0}
 	return {"kind": "arc", "range": Balance.FIST_RANGE, "arc": Balance.FIST_ARC, "len": Balance.FIST_RANGE, "w": 0.0}
 

@@ -259,6 +259,12 @@ func _active_skill(player) -> String:
 		return str(player.cast.name)
 	if player.channel != null and str(player.channel.kind) == "mega":
 		return "mega"
+	if player.channel != null and str(player.channel.kind) == "saber":
+		return "ember"
+	if int(player.net_pose) == 4 and int(player.net_skill) == 3:
+		return "ember"
+	if int(player.net_pose) == 4 and int(player.net_skill) == 6:
+		return "mega"
 	return ""
 
 
@@ -682,7 +688,7 @@ func _help_copy() -> String:
 You spawn bare-handed. A punch does [b]5[/b] damage in a 1.4 m arc. Chop grove trees for wood, plants for fiber, and the small animals for hide. You can hold 3 of each. Every item you carry takes 7 percent off your speed, down to 45 percent. Skills, swings, hops, and dashes still work. [b]F[/b] drops the bag when you are not holding a diamond. Drop does it even if you are. Teammates and enemies can take a pile.
 Each keep has a sword machine and a wand machine. They start unbuilt. [b]E[/b] at your own machine stores whatever it still needs. A sword takes 4 wood and 2 hide. A wand takes 1 wood, 2 hide, and 3 fiber. The delivery that finishes it also arms you. After that, anyone can take that weapon for free, even an enemy who has not built their own. An enemy cannot spend resources on your machine. Gates start open. Build one with 3 wood and 1 fiber. Repair a damaged gate with 1 wood, then the repair channel.
 On death the bag falls where you fell, and a held weapon lies there for 3 seconds. You respawn bare-handed. Swapping weapons does not refresh cooldowns.
-[b]1[/b] [b]2[/b] [b]3[/b] cast the weapon's three skills. The fiery sword is Ignition Swipe, Horizontal Spark Slash, and Ember Burn. Its basic attack is 15 damage, once a second, in a 120 degree arc, 1 m. The wand is Fireball, Ice Shadowing, and Mega Explosion. Its basic attack is 10 damage, once a second, in a 6 m by 4 m line ahead of you.
+[b]1[/b] [b]2[/b] [b]3[/b] cast the weapon's three skills. The fiery sword's basic attack is 15 damage, once a second, in a 120 degree arc, 1 m. Fire Sword enchants that swing for 8 seconds or 5 hits: 1.5 m, 180 degrees, double damage, and 5 burn damage per second for 3 seconds. Lightning Quick Move dashes 8 m in a straight line for 10 lightning damage, and you cannot be hit during the dash. Lightsaber Beam channels for 3 seconds, then a 15 m by 4 m line deals 75 damage to everyone in it, teammates included. The wand is Fireball, Ice Shadowing, and Mega Explosion. Its basic attack is 10 damage, once a second, in a 6 m by 4 m line ahead of you.
 Mega channels 2.5s. You cannot move, attack, or use other skills. Blast 14 m ahead, radius 10 m, [b]200[/b] damage, teammates included, 70 MP.
 While you carry a diamond you cannot swing or cast, and you move at half speed on top of the bag slowdown. [b]G[/b] or Defense halves incoming damage for 5 MP each second. [b]F[/b], right-click, or Throw sends it 1 m along your facing.
 [b]E[/b] also uses a catapult, ladder, spring, sewer, or tower, and repairs your gate. [b]Space[/b] hops.

@@ -182,7 +182,7 @@ func _ready() -> void:
 	nia.global_position = saved
 	nia.wish = Vector2.ZERO
 	nia.force_update_transform()
-	_check("dash 4m", absf(Balance.DASH_DIST - 4.0) < 0.001)
+	_check_sword_skills()
 	_check("river water", match_node.in_water(Vector2(25, 25.5)))
 	_check("pond water", match_node.in_water(Vector2(44, 18)))
 	_check("castle dry", not match_node.in_water(Vector2(12, 25)))
@@ -348,6 +348,188 @@ func _ready() -> void:
 	for forge5 in match_node.forges:
 		if int(forge5.get("team", -1)) == 0:
 			forge5["built"] = false
+
+
+func _check_sword_skills() -> void:
+	_check("lightning dash 8m", absf(Balance.DASH_DIST - 8.0) < 0.001 and absf(Balance.DASH_TIME - 0.25) < 0.001)
+	_check("saber 15 by 4", absf(Balance.SABER_LEN - 15.0) < 0.001 and absf(Balance.SABER_W - 4.0) < 0.001)
+	_check("saber 75 in 3s", absf(Balance.SABER_DAMAGE - 75.0) < 0.001 and absf(Balance.SABER_TIME - 3.0) < 0.001)
+	var sword: Dictionary = Balance.SKILLS["ignite"]
+	var bolt: Dictionary = Balance.SKILLS["spark"]
+	var beam: Dictionary = Balance.SKILLS["ember"]
+	_check("fire sword cost", absf(float(sword["cast"]) - 0.1) < 0.001 and absf(float(sword["cd"]) - 15.0) < 0.001 and absf(float(sword["mp"]) - 0.3) < 0.001)
+	_check("lightning cost", absf(float(bolt["cast"]) - 0.5) < 0.001 and absf(float(bolt["cd"]) - 5.0) < 0.001 and absf(float(bolt["mp"]) - 0.1) < 0.001)
+	_check("saber cost", absf(float(beam["cd"]) - 24.0) < 0.001 and absf(float(beam["mp_flat"]) - 50.0) < 0.001)
+	var player = match_node.player
+	var foe = null
+	var mate = null
+	var rows: Array = []
+	for u in match_node.units:
+		rows.append({
+			"u": u,
+			"pos": u.global_position,
+			"hp": u.hp,
+			"inv": u.invuln,
+			"shock": u.shock,
+			"burn": u.burn,
+			"facing": u.facing,
+			"dead": u.dead,
+			"mp": u.mp,
+		})
+		if u == player or u.dead:
+			continue
+		if int(u.team) != int(player.team) and foe == null:
+			foe = u
+		elif int(u.team) == int(player.team) and mate == null:
+			mate = u
+	var mp0: float = player.mp
+	player.equip_weapon("sword")
+	player.mp = player.max_mp
+	player.global_position = Vector2(44, 25)
+	player.facing = 0.0
+	player.wish = Vector2.ZERO
+	player.invuln = 0.0
+	player.force_update_transform()
+	if foe != null and mate != null:
+		foe.global_position = Vector2(45.7, 25)
+		foe.hp = 100.0
+		foe.invuln = 0.0
+		foe.shock = 0.0
+		foe.burn = null
+		foe.force_update_transform()
+		match_node.resolve_swing(player)
+		_check("plain sword misses past 1m", absf(foe.hp - 100.0) < 0.05)
+		player.cds["ignite"] = 0.0
+		var fired: bool = player.try_cast("ignite")
+		var free_cast := false
+		var cast_t := 0.0
+		if player.cast != null:
+			free_cast = not player.cast.root and not player.cast.slow
+			cast_t = float(player.cast.dur)
+			player.cast.t = 0.0
+			match_node.finish_cast(player)
+		_check("fire sword casts", fired and free_cast and absf(cast_t - 0.1) < 0.02)
+		_check("fire sword buff", player.fire_sword_hits == 5 and player.fire_sword_t > 7.5)
+		var shape: Dictionary = player.swing_shape()
+		_check("fire sword reach", absf(float(shape["range"]) - 1.5) < 0.001 and absf(float(shape["arc"]) - PI) < 0.001)
+		match_node.resolve_swing(player)
+		_check("fire sword doubles", absf(foe.hp - 70.0) < 0.6)
+		_check("fire sword burn", foe.burn != null and absf(float(foe.burn.dps) - 5.0) < 0.05 and absf(float(foe.burn.t) - 3.0) < 0.05)
+		_check("fire sword charge spent", player.fire_sword_hits == 4)
+		foe.global_position = Vector2(60, 25)
+		foe.force_update_transform()
+		match_node.resolve_swing(player)
+		_check("fire sword whiff keeps charge", player.fire_sword_hits == 4)
+		foe.global_position = Vector2(45.7, 25)
+		foe.hp = 500.0
+		foe.invuln = 0.0
+		foe.force_update_transform()
+		for _hit in 4:
+			match_node.resolve_swing(player)
+		_check("fire sword ends after 5 hits", player.fire_sword_hits == 0 and player.fire_sword_t <= 0.0)
+		_check("fifth hit still empowered", absf(foe.hp - 380.0) < 1.0)
+		player.mp = player.max_mp
+		player.cds["spark"] = 0.0
+		player.cast = null
+		player.dash = null
+		player.invuln = 0.0
+		player.facing = 0.0
+		foe.global_position = Vector2(47, 25)
+		foe.hp = 100.0
+		foe.shock = 0.0
+		foe.invuln = 0.0
+		foe.force_update_transform()
+		var sparked: bool = player.try_cast("spark")
+		var wind_ok := false
+		if player.cast != null:
+			wind_ok = not player.cast.root and not player.cast.slow and absf(float(player.cast.dur) - 0.5) < 0.02
+			player.facing = 0.0
+			player.cast.t = 0.0
+			match_node.finish_cast(player)
+		var dashed: bool = player.dash != null
+		var dash_dist := 0.0
+		var dash_dur := 0.0
+		if dashed:
+			dash_dist = float(player.dash.dist)
+			dash_dur = float(player.dash.dur)
+			player.dash.from_pos = Vector2(46.2, 25)
+			player.global_position = Vector2(47.8, 25)
+			player.force_update_transform()
+			player.dash.hit = {}
+			var hp_before: float = foe.hp
+			match_node.strike_dash(player)
+			_check("lightning hits 10", absf(foe.hp - (hp_before - 10.0)) < 0.6)
+			_check("lightning no shock", foe.shock <= 0.01)
+		else:
+			_check("lightning hits 10", false)
+			_check("lightning no shock", false)
+		_check("lightning windup", sparked and wind_ok)
+		_check("lightning dash", dashed and absf(dash_dist - 8.0) < 0.001 and absf(dash_dur - 0.25) < 0.001 and player.invuln >= 0.24 and player.invuln <= 0.26)
+		player.dash = null
+		player.cast = null
+		player.channel = null
+		player.global_position = Vector2(44, 25)
+		player.facing = 0.0
+		player.mp = 100.0
+		player.cds["ember"] = 0.0
+		player.force_update_transform()
+		foe.global_position = Vector2(52, 25)
+		foe.hp = 100.0
+		foe.invuln = 0.0
+		foe.burn = null
+		foe.force_update_transform()
+		mate.global_position = Vector2(50, 26)
+		mate.hp = 100.0
+		mate.invuln = 0.0
+		mate.force_update_transform()
+		_check("saber holds for a teammate", not match_node.saber_worth(player))
+		mate.global_position = Vector2(44, 40)
+		mate.force_update_transform()
+		_check("saber fires on a clear lane", match_node.saber_worth(player))
+		mate.global_position = Vector2(50, 26)
+		mate.force_update_transform()
+		var beamed: bool = player.try_cast("ember")
+		var ch_ok: bool = player.channel != null and str(player.channel.kind) == "saber"
+		var ch_t := 0.0
+		var ch_len := 0.0
+		var ch_w := 0.0
+		if ch_ok:
+			ch_t = float(player.channel.t)
+			ch_len = float(player.channel.len)
+			ch_w = float(player.channel.w)
+			player.channel.t = 0.0
+			match_node.finish_channel(player)
+		_check("saber channels", beamed and ch_ok and absf(ch_t - 3.0) < 0.05 and absf(ch_len - 15.0) < 0.001 and absf(ch_w - 4.0) < 0.001)
+		_check("saber spent 50", absf(player.mp - 50.0) < 0.5)
+		_check("saber hits enemy", absf(foe.hp - 25.0) < 1.0)
+		_check("saber hits teammate", absf(mate.hp - 25.0) < 1.0)
+		_check("saber spares caster", player.hp > 90.0)
+	else:
+		_check("sword skill targets", false)
+	for row in rows:
+		var u2 = row["u"]
+		u2.global_position = row["pos"]
+		u2.hp = row["hp"]
+		u2.invuln = row["inv"]
+		u2.shock = row["shock"]
+		u2.burn = row["burn"]
+		u2.facing = row["facing"]
+		u2.dead = row["dead"]
+		u2.mp = row["mp"]
+		if u2.body_col:
+			u2.body_col.disabled = bool(u2.dead)
+		u2.force_update_transform()
+	player.cast = null
+	player.dash = null
+	player.channel = null
+	player.wish = Vector2.ZERO
+	player.fire_sword_t = 0.0
+	player.fire_sword_hits = 0
+	player.equip_weapon("none")
+	player.mp = mp0
+	player.cds["ignite"] = 0.0
+	player.cds["spark"] = 0.0
+	player.cds["ember"] = 0.0
 
 
 func _physics_process(_dt: float) -> void:
