@@ -415,7 +415,7 @@ func tick_bot(dt: float) -> void:
 			goal_pos = goal_unit.global_position + n * 1.7
 	var stand: Vector2 = sim.stand_point(self, goal_pos)
 	var wp: Vector2 = sim.steer_point(self, stand)
-	if str(bot_corner) == "" and wp.distance_to(stand) < 0.4:
+	if str(bot_corner) == "" and wp.distance_to(stand) < 0.4 and str(goal.get("kind", "")) != "door":
 		wp = sim.crowd_slot(self, wp)
 	var delta := wp - global_position
 	var length := delta.length()

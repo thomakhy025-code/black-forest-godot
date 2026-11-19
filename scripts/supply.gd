@@ -267,7 +267,7 @@ static func lock_ok(match_node, u, lock: Dictionary) -> bool:
 		var mx := float(ref.get("max", 1.0))
 		if hp >= mx and hp > 0.0:
 			return false
-		lock["pos"] = _door_stand(ref)
+		lock["pos"] = _door_stand(ref, u)
 		return true
 	if kind == "drop":
 		if not match_node.weapon_drops.has(ref):
@@ -607,12 +607,34 @@ static func _carry_job(match_node, u, forge) -> Dictionary:
 	return _fetch(match_node, u, missing, forge["pos"])
 
 
-static func _door_stand(door) -> Vector2:
+static func _door_slot(u) -> int:
+	# Five places along one gate. Azure stands in for Holt, Crimson for You,
+	# so an online match still gives every builder a different spot.
+	var id := str(u.unit_id)
+	if id == "nia" or id == "holt" or id == "azure":
+		return -2
+	if id == "joss" or id == "sable":
+		return -1
+	if id == "bram" or id == "mira":
+		return 1
+	if id == "quinn" or id == "you" or id == "crimson":
+		return 2
+	return 0
+
+
+static func _door_stand(door, u = null) -> Vector2:
+	# Stand on the courtyard side, in front of the opening, close enough to deposit.
+	# One shared point put the rest of the team on a side slot outside the use
+	# range, and they stopped there with the wood still in their hands.
 	var rect: Rect2 = door["rect"]
 	var center := rect.get_center()
+	var y := center.y
+	if u != null:
+		var span := maxf(0.2, rect.size.y * 0.5 - 0.6)
+		y = clampf(center.y + float(_door_slot(u)) * 0.62, center.y - span, center.y + span)
 	if int(door.get("team", 0)) == 0:
-		return Vector2(rect.position.x - 1.2, center.y)
-	return Vector2(rect.end.x + 1.2, center.y)
+		return Vector2(rect.position.x - 1.05, y)
+	return Vector2(rect.end.x + 1.05, y)
 
 
 static func _door_job(match_node, u) -> Dictionary:
@@ -633,7 +655,7 @@ static func _door_job(match_node, u) -> Dictionary:
 			door = w
 	if door == null:
 		return {}
-	var center2: Vector2 = _door_stand(door)
+	var center2: Vector2 = _door_stand(door, u)
 	if float(door.get("hp", 0.0)) <= 0.0:
 		var need_wood := int(door.get("wood", 0)) < 3
 		var need_fiber := int(door.get("fiber", 0)) < 1

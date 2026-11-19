@@ -62,6 +62,7 @@ var _ray := PhysicsRayQueryParameters2D.new()
 var _net_buf := StreamPeerBuffer.new()
 var _water_dirty := true
 var _water_bounds: Array = []
+var stage: Node = null
 
 @onready var camera: Camera2D = $Camera2D
 @onready var unit_root: Node2D = $Units
@@ -107,6 +108,7 @@ func _ready() -> void:
 	_ray.collide_with_bodies = true
 	_ray.collide_with_areas = false
 	_ray.hit_from_inside = false
+	_ensure_stage()
 
 
 func start_match(data: Dictionary, record_results: bool = true, show_help: bool = false) -> void:
@@ -150,6 +152,7 @@ func start_match(data: Dictionary, record_results: bool = true, show_help: bool 
 		hud.show_help()
 	elif hud and hud.has_method("hide_help"):
 		hud.hide_help()
+	_stage_sync()
 
 
 func restart() -> void:
@@ -163,6 +166,39 @@ func dismiss_help() -> void:
 		Profile.save_data()
 	if hud and hud.has_method("hide_help"):
 		hud.hide_help()
+
+
+func _ensure_stage() -> void:
+	if DisplayServer.get_name() == "headless":
+		return
+	if get_parent() is SubViewport:
+		return
+	if stage != null:
+		return
+	var script: Script = load("res://scripts/stage.gd")
+	if script == null:
+		return
+	var node := Node.new()
+	node.name = "Stage"
+	node.set_script(script)
+	add_child(node)
+	stage = node
+
+
+func _stage_sync() -> void:
+	if stage != null and stage.has_method("rebuild"):
+		stage.rebuild(self)
+
+
+func _process(dt: float) -> void:
+	if stage != null and stage.has_method("present"):
+		stage.present(dt)
+
+
+func _pointer_world() -> Vector2:
+	if stage != null and stage.has_method("uses_view") and stage.uses_view():
+		return stage.ground_at(get_viewport().get_mouse_position())
+	return get_global_mouse_position()
 
 
 func _physics_process(dt: float) -> void:
@@ -186,7 +222,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			if player.carrying != null:
 				Net.note_throw()
 			else:
-				player.click_target = get_global_mouse_position()
+				player.click_target = _pointer_world()
 			get_viewport().set_input_as_handled()
 		elif event.button_index == MOUSE_BUTTON_LEFT:
 			Net.note_attack()
@@ -195,7 +231,7 @@ func _unhandled_input(event: InputEvent) -> void:
 	if phase != "play" or paused or player == null:
 		return
 	if event is InputEventMouseButton and event.pressed:
-		var world := get_global_mouse_position()
+		var world := _pointer_world()
 		if event.button_index == MOUSE_BUTTON_RIGHT:
 			if player.carrying != null:
 				throw_diamond(player)
@@ -2255,6 +2291,7 @@ func start_online_match(crimson: Dictionary, azure: Dictionary, crimson_peer: in
 		hud.bind_match(self)
 	if not headless_server and hud and hud.has_method("hide_help"):
 		hud.hide_help()
+	_stage_sync()
 
 
 func _spawn_online_units(crimson: Dictionary, azure: Dictionary, crimson_peer: int, azure_peer: int, local_peer: int) -> void:

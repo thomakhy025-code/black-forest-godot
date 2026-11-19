@@ -348,6 +348,112 @@ func _ready() -> void:
 	for forge5 in match_node.forges:
 		if int(forge5.get("team", -1)) == 0:
 			forge5["built"] = false
+	_check_door_stands()
+	_check_stage()
+
+
+func _check_door_stands() -> void:
+	var Supply = preload("res://scripts/supply.gd")
+	for team in [0, 1]:
+		var door = null
+		for w in match_node.walls:
+			if str(w.get("kind", "")) == "door" and int(w.get("team", -1)) == team:
+				door = w
+				break
+		if door == null:
+			_check("door stand in reach", false)
+			continue
+		var rect: Rect2 = door["rect"]
+		var seen := {}
+		var count := 0
+		for u in match_node.units:
+			if int(u.team) != team:
+				continue
+			var stand: Vector2 = Supply._door_stand(door, u)
+			var nearest := Vector2(
+				clampf(stand.x, rect.position.x, rect.end.x),
+				clampf(stand.y, rect.position.y, rect.end.y)
+			)
+			var dist: float = stand.distance_to(nearest)
+			var inside := rect.has_point(stand)
+			seen["%0.2f,%0.2f" % [stand.x, stand.y]] = true
+			count += 1
+			_check("door stand in reach", dist > 0.7 and dist < 2.2 and not inside)
+		_check("door stands differ", seen.size() == count and count >= 5)
+
+
+func _check_stage() -> void:
+	var stage = Node.new()
+	stage.name = "Stage"
+	stage.set_script(load("res://scripts/stage.gd"))
+	if not stage.has_method("rebuild"):
+		_check("3d view", false)
+		stage.free()
+		return
+	match_node.add_child(stage)
+	stage.rebuild(match_node)
+	var shown: bool = stage.uses_view()
+	_check("3d view", shown)
+	if shown:
+		stage.present(1.0 / 30.0)
+		stage.present(1.0 / 30.0)
+		var actors: Dictionary = stage.actors
+		_check("3d heroes", actors.size() == 10)
+		var door_n: int = stage.doors.size()
+		_check("3d gates", door_n == 4)
+		var gem_n: int = stage.gems.size()
+		_check("3d gems", gem_n == 2)
+		var trees: int = stage.harvest.size()
+		_check("3d forest", trees == 33)
+		var cam: Camera3D = stage.camera
+		var player = match_node.player
+		_check("camera above the field", cam != null and cam.global_position.y > 8.0)
+		_check("camera south of you", cam != null and cam.global_position.z > player.global_position.y + 4.0)
+		var you: Dictionary = actors.get("you", {})
+		if you.is_empty():
+			_check("your hero", false)
+		else:
+			var model: Node3D = you["model"]
+			var unit = you["unit"]
+			var facing: float = unit.facing
+			var expect: float = PI * 0.5 - facing
+			var gap: float = absf(angle_difference(model.rotation.y, expect))
+			_check("hero faces their heading", gap < 0.08)
+			_check("hero clip", str(you["clip"]) != "")
+			var body_tinted := false
+			for mesh in model.find_children("*", "MeshInstance3D", true, false):
+				var mi := mesh as MeshInstance3D
+				if mi and str(mi.name).contains("Body") and mi.get_surface_override_material(0) != null:
+					body_tinted = true
+			_check("team color on the body", body_tinted)
+		var vp: Vector2 = stage.view.size
+		var center := vp * 0.5
+		var picked: Vector2 = stage.ground_at(center)
+		var focus_at := Vector2(float(stage.focus.x), float(stage.focus.z))
+		_check("click lands on the ground", picked.distance_to(focus_at) < 4.0)
+	var world: Node = match_node.get_node_or_null("World")
+	if world:
+		world.visible = true
+	var units: Node = match_node.get_node_or_null("Units")
+	if units:
+		units.visible = true
+	var fx: Node = match_node.get_node_or_null("Fx")
+	if fx:
+		fx.visible = true
+		fx.set_process(true)
+	for u in match_node.units:
+		var fighter = u.get_node_or_null("Visual/Fighter")
+		if fighter:
+			fighter.set_process(true)
+			fighter.visible = true
+	var hud = match_node.get_node_or_null("HUD")
+	if hud is CanvasLayer:
+		hud.layer = 10
+	if stage.view:
+		stage.view.render_target_update_mode = SubViewport.UPDATE_DISABLED
+	if stage.layer:
+		stage.layer.visible = false
+	stage.free()
 
 
 func _check_sword_skills() -> void:
