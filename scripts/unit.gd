@@ -551,9 +551,10 @@ func try_cast(skill_name: String) -> bool:
 		cds[skill_name] = float(def["cd"]) * Balance.cd_mul(stats)
 		if skill_name == "mega":
 			sim.begin_mega(self)
-			_sfx("mega")
+			_sfx("mega_rumble")
 		else:
 			sim.begin_saber(self)
+			_sfx("saber_hum")
 		return true
 	mp -= cost
 	var dur := cast_duration(skill_name)

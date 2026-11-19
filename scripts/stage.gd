@@ -4,6 +4,7 @@ extends Node
 ## Models are KayKit by Kay Lousberg, CC0. No account was required.
 
 const Balance = preload("res://scripts/balance.gd")
+const SkillLook = preload("res://scripts/skill_look.gd")
 
 const KNIGHT = preload("res://assets/models/characters/Knight.glb")
 const MAGE = preload("res://assets/models/characters/Mage.glb")
@@ -73,6 +74,7 @@ var map_root: Node3D
 var cast_root: Node3D
 var fx_root: Node3D
 var camera: Camera3D
+var look = null
 var sim = null
 var aimed := false
 var focus := Vector3.ZERO
@@ -143,6 +145,8 @@ func rebuild(match_node) -> void:
 	_wipe(map_root)
 	_wipe(cast_root)
 	_wipe(fx_root)
+	if look != null:
+		look.reset()
 	actors.clear()
 	ghosts.clear()
 	harvest.clear()
@@ -242,6 +246,8 @@ func _build_view() -> void:
 	world.add_child(map_root)
 	world.add_child(cast_root)
 	world.add_child(fx_root)
+	look = SkillLook.new()
+	look.setup(fx_root)
 
 
 func _fit() -> void:
@@ -1049,38 +1055,8 @@ func _make_ghost() -> Dictionary:
 
 
 func _present_fx() -> void:
-	beam_n = 0
-	disc_n = 0
-	shot_n = 0
-	fire_n = 0
-	for u in sim.units:
-		if not is_instance_valid(u):
-			continue
-		if u.channel != null and str(u.channel.kind) == "saber":
-			_beam(u.channel.pos, float(u.channel.ang), float(u.channel.len), float(u.channel.w))
-		elif int(u.net_pose) == 4 and int(u.net_skill) == 3:
-			_beam(u.global_position, float(u.facing), Balance.SABER_LEN, Balance.SABER_W)
-		if u.channel != null and str(u.channel.kind) == "mega":
-			_disc(float(u.channel.r), 0.08, u.channel.pos, _fx_mat("mega", Color(1.0, 0.35, 0.28, 0.28)))
-		elif int(u.net_pose) == 4 and int(u.net_skill) == 6:
-			var ahead := Vector2(cos(u.facing), sin(u.facing)) * Balance.MEGA_AHEAD
-			_disc(Balance.MEGA_RADIUS, 0.08, u.global_position + ahead, _fx_mat("mega", Color(1.0, 0.35, 0.28, 0.28)))
-	for fx in sim.saber_fx:
-		var fade := clampf(float(fx.t) / maxf(0.05, float(fx.dur)), 0.0, 1.0)
-		_beam(fx.pos, float(fx.ang), float(fx.len), float(fx.w), Color(1.0, 0.95, 0.6, 0.4 * fade))
-	for fx2 in sim.mega_fx:
-		var fade2 := clampf(float(fx2.t) / maxf(0.05, float(fx2.dur)), 0.0, 1.0)
-		_disc(float(fx2.r) * (0.55 + 0.45 * (1.0 - fade2)), 0.1, fx2.pos, _fx_mat("blast", Color(1.0, 0.55, 0.25, 0.34 * fade2)))
-	for s in sim.shots:
-		if str(s.kind) != "fireball":
-			continue
-		_shot(s.pos)
-	for f in sim.fires:
-		_fire(f.pos, float(f.r), clampf(float(f.t) / 2.4, 0.15, 1.0))
-	_hide_pool(beams, beam_n)
-	_hide_pool(discs, disc_n)
-	_hide_pool(shots3, shot_n)
-	_hide_pool(fires3, fire_n)
+	if look != null:
+		look.draw(sim, camera)
 	_present_floats()
 	_present_drops()
 	_present_piles()

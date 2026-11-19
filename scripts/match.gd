@@ -1197,6 +1197,7 @@ func detonate_mega(u, ch) -> void:
 	fx.r = ch.r
 	mega_fx.append(fx)
 	shake = 2.6
+	Sfx.stop_bed()
 	_sfx("mega")
 
 
@@ -1217,6 +1218,7 @@ func detonate_saber(u, ch) -> void:
 		fx.dur = 0.9
 		saber_fx.append(fx)
 	shake = 1.15
+	Sfx.stop_bed()
 	_sfx("saber")
 
 
@@ -2667,15 +2669,22 @@ func _note_remote_skill(u, skill: int, pos: Vector2, facing: float) -> void:
 	u.net_skill = skill
 	if net_role != "client":
 		return
-	if prev == 0 and skill > 0 and skill != 6 and u != player:
+	if skill == 3 and prev != 3:
+		_sfx("saber_hum")
+	elif skill == 6 and prev != 6:
+		_sfx("mega_rumble")
+	elif prev == 0 and skill > 0 and skill != 6 and skill != 3 and u != player:
 		var cue := _remote_skill_sfx(skill)
 		if cue != "":
 			_sfx(cue)
-	if prev == 0 or skill != 0:
-		return
-	if prev == 3:
+	if prev == 3 and skill != 3:
+		Sfx.stop_bed()
 		_spawn_remote_saber(pos, facing)
 		_sfx("saber")
+		return
+	if prev == 6 and skill != 6:
+		Sfx.stop_bed()
+	if prev == 0 or skill != 0:
 		return
 	if prev < 0 or prev >= Balance.NET_SKILL_IDS.size():
 		return
@@ -2741,6 +2750,7 @@ func _apply_net_blasts(rows: Array) -> void:
 		if not _blast_seen.has(key):
 			_blast_seen[key] = true
 			shake = maxf(shake, 2.6)
+			Sfx.stop_bed()
 			_sfx("mega")
 		var fx := State.new()
 		fx.pos = pos
