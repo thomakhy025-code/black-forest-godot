@@ -799,6 +799,7 @@ func _make_actor(u) -> Dictionary:
 		"gear": "", "shown": null, "light": light, "fill": fill, "fill_mat": fill_mat,
 		"bar": bar, "clip": "", "prev": u.global_position, "wind": 0.0, "swing": 0.0,
 		"pose": -1, "hp": float(u.hp), "react": 0.0,
+		"trail": 0.0, "trail_t": 0.0, "speed": 0.0, "loco": "",
 	}
 
 
@@ -809,8 +810,19 @@ func _present_actor(actor: Dictionary, dt: float) -> void:
 	var root: Node3D = actor["root"]
 	var prev: Vector2 = actor["prev"]
 	var p: Vector2 = u.global_position
-	var speed := prev.distance_to(p) / maxf(dt, 0.001)
+	# The body only moves on a physics tick. A render frame in between has no
+	# delta, and treating that as a stop restarted the clip every other frame.
+	# That snap is the head and body shake. Average the real travel instead.
+	var moved: float = prev.distance_to(p)
 	actor["prev"] = p
+	actor["trail"] = float(actor["trail"]) + moved
+	actor["trail_t"] = float(actor["trail_t"]) + dt
+	var speed: float = float(actor["speed"])
+	if float(actor["trail_t"]) >= 0.12:
+		speed = float(actor["trail"]) / float(actor["trail_t"])
+		actor["speed"] = speed
+		actor["trail"] = 0.0
+		actor["trail_t"] = 0.0
 	var y := 0.04
 	if _on_bridge(p):
 		y = 0.2
@@ -905,10 +917,11 @@ func _choose(u, actor: Dictionary, speed: float, client: bool) -> Dictionary:
 			return {"clip": _attack_clip(weapon), "speed": _attack_speed(weapon)}
 		if float(u.hit_flash) > 0.04:
 			return {"clip": "Hit_A", "speed": 1.5}
-	if speed > 4.5:
+	var had := str(actor.get("loco", ""))
+	if speed > 5.0 or (had == "Running_A" and speed > 3.8):
 		clip = "Running_A"
 		spd = clampf(speed * RUN_SCALE, 0.85, 2.8)
-	elif speed > 0.35:
+	elif speed > 0.65 or ((had == "Walking_A" or had == "Running_A") and speed > 0.28):
 		clip = "Walking_A"
 		spd = clampf(speed * WALK_SCALE, 0.7, 1.7)
 	elif not client and bool(u.guard):
@@ -919,6 +932,10 @@ func _choose(u, actor: Dictionary, speed: float, client: bool) -> Dictionary:
 		clip = "Unarmed_Idle"
 	else:
 		clip = "Idle"
+	if clip == "Walking_A" or clip == "Running_A":
+		actor["loco"] = clip
+	else:
+		actor["loco"] = ""
 	return {"clip": clip, "speed": spd}
 
 
@@ -955,7 +972,10 @@ func _play(actor: Dictionary, clip: String, speed: float, restart: bool) -> void
 		clip = "Idle" if anim.has_animation("Idle") else ""
 	if clip == "":
 		return
-	if restart or str(anim.current_animation) != clip:
+	var same := clip == str(actor["clip"])
+	# Replay only when the action actually changes. A matching name that the
+	# player reports as blank must not seek back to frame zero every draw.
+	if restart or not same or (not anim.is_playing() and LOOPY.has(clip)):
 		anim.play(clip)
 	anim.speed_scale = maxf(speed, 0.05)
 	actor["clip"] = clip
