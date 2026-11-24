@@ -92,6 +92,10 @@ var forges: Array = []
 var flags: Array = []
 var gems: Array = []
 var mats := {}
+var flat_shader: Shader
+# Filmic white is at least 1. Copied from the viewport environment when the view is built.
+var flat_exposure := 0.84
+var flat_white := 1.0
 var prepped := {}
 var beams: Array = []
 var discs: Array = []
@@ -225,6 +229,10 @@ func _build_view() -> void:
 	env.ambient_light_energy = 0.38
 	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
 	env.tonemap_exposure = 0.84
+	# Filmic's white point is raised to 1 when the property is lower. The flat
+	# ground shader inverts this same exposure and white, so keep them together.
+	flat_exposure = env.tonemap_exposure
+	flat_white = maxf(env.tonemap_white, 1.0)
 	env.fog_enabled = true
 	env.fog_mode = Environment.FOG_MODE_EXPONENTIAL
 	env.fog_light_color = Color(0.50, 0.58, 0.64)
@@ -315,13 +323,15 @@ func _build_map() -> void:
 func _designed_ground() -> void:
 	# One sheet per code, sharing a height. A full-map grass plane under the other biomes z-fights on GL.
 	var ground_y := 0.02
-	_sheet_code(0, "grass", Color.html("#98FB98"), 1.0, ground_y)
-	_sheet_code(1, "meadow", Color.html("#98FB98"), 1.0, ground_y)
+	var field := Color.html("#98FB98")
+	var lake := Color.html("#ADD8E6")
+	_sheet_code(0, "grass", field, 1.0, ground_y, true)
+	_sheet_code(1, "meadow", field, 1.0, ground_y, true)
 	_sheet_code(2, "sand", Color(0.62, 0.52, 0.34), 1.0, ground_y)
 	_sheet_code(7, "yard", Color(0.78, 0.68, 0.46), 0.9, ground_y)
 	_sheet_code(8, "isle", Color(0.45, 0.62, 0.3), 1.0, ground_y)
 	_sheet_code(4, "road", Color(0.62, 0.48, 0.28), 0.95, ground_y)
-	_sheet_code(5, "water", Color.html("#ADD8E6"), 0.08, -0.04)
+	_sheet_code(5, "water", lake, 1.0, -0.04, true)
 	_sheet_code(6, "plank", Color(0.56, 0.38, 0.2), 0.82, 0.1)
 	var rock := _mat("mountain", Color(0.45, 0.43, 0.39), 0.95)
 	for rect_item in MapDesign.rects(3):
@@ -340,13 +350,14 @@ func _designed_ground() -> void:
 			_box(Vector3(0.08, 0.22, span.size.y), Vector3(span.end.x - 0.04, 0.28, c.y), rail)
 
 
-func _sheet_code(code: int, key: String, color: Color, rough: float, y: float) -> void:
+func _sheet_code(code: int, key: String, color: Color, rough: float, y: float, flat: bool = false) -> void:
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
 	for rect_item in MapDesign.rects(code):
 		var rect: Rect2 = rect_item
 		_quad(st, rect.position.x, rect.position.y, rect.end.x, rect.end.y, y)
-	_sheet(st, _mat(key, color, rough))
+	var mat: Material = _flat_mat(color) if flat else _mat(key, color, rough)
+	_sheet(st, mat)
 
 
 func _code_at(pos: Vector2) -> int:
@@ -1634,6 +1645,65 @@ func _scene(key: String) -> PackedScene:
 			return PINE_S
 		_:
 			return null
+
+
+func _flat_shader_code() -> String:
+	return """shader_type spatial;
+render_mode unshaded, fog_disabled, cull_disabled, shadows_disabled;
+
+uniform vec3 target_srgb;
+uniform float tone_exposure = 0.84;
+uniform float tone_white = 1.0;
+
+// Compatibility writes linear_to_srgb(filmic(cubic_srgb_to_linear(ALBEDO) * exposure)).
+// Lights and fog are skipped. This stores the inverse so the framebuffer sRGB is the target.
+float flat_channel(float target) {
+	float bias = 2.0;
+	float curve_a = 0.22 * bias * bias;
+	float curve_b = 0.30 * bias;
+	float curve_c = 0.10;
+	float curve_d = 0.20;
+	float curve_e = 0.01;
+	float curve_f = 0.30;
+	float white = max(tone_white, 1.0);
+	float white_tm = ((white * (curve_a * white + curve_c * curve_b) + curve_d * curve_e) / (white * (curve_a * white + curve_b) + curve_d * curve_f)) - curve_e / curve_f;
+	float y = pow((target + 0.055) / 1.055, 1.0 / 0.416666667);
+	float u = y * white_tm + curve_e / curve_f;
+	float a = curve_a * (u - 1.0);
+	float b = curve_b * (u - curve_c);
+	float c = curve_d * (u * curve_f - curve_e);
+	float disc = sqrt(max(b * b - 4.0 * a * c, 0.0));
+	float x = (-b - disc) / (2.0 * a);
+	float linear_albedo = x / max(tone_exposure, 0.001);
+	float s = pow(max(linear_albedo, 0.0), 0.416666667);
+	for (int i = 0; i < 4; i++) {
+		float f = s * (s * (s * 0.305306011 + 0.682171111) + 0.012522878) - linear_albedo;
+		float df = (3.0 * 0.305306011 * s + 2.0 * 0.682171111) * s + 0.012522878;
+		s -= f / df;
+	}
+	return max(s, 0.0);
+}
+
+void fragment() {
+	ALBEDO = vec3(flat_channel(target_srgb.r), flat_channel(target_srgb.g), flat_channel(target_srgb.b));
+}
+"""
+
+
+func _flat_mat(color: Color) -> ShaderMaterial:
+	var key := "flat:" + color.to_html(false)
+	if mats.has(key):
+		return mats[key] as ShaderMaterial
+	if flat_shader == null:
+		flat_shader = Shader.new()
+		flat_shader.code = _flat_shader_code()
+	var mat := ShaderMaterial.new()
+	mat.shader = flat_shader
+	mat.set_shader_parameter("target_srgb", Vector3(color.r, color.g, color.b))
+	mat.set_shader_parameter("tone_exposure", flat_exposure)
+	mat.set_shader_parameter("tone_white", flat_white)
+	mats[key] = mat
+	return mat
 
 
 func _mat(key: String, color: Color, rough: float) -> StandardMaterial3D:
