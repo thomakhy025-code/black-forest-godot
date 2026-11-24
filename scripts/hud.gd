@@ -450,6 +450,8 @@ func _armory() -> void:
 
 
 func _build() -> void:
+	_scrim(true)
+	_scrim(false)
 	var top := MarginContainer.new()
 	top.set_anchors_preset(Control.PRESET_TOP_WIDE)
 	top.offset_bottom = 92
@@ -641,12 +643,27 @@ func _bar(color: Color) -> ProgressBar:
 	return bar
 
 
+func _scrim(top: bool) -> void:
+	var band := ColorRect.new()
+	band.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	band.color = Color(0.05, 0.04, 0.03, 0.62)
+	if top:
+		band.set_anchors_preset(Control.PRESET_TOP_WIDE)
+		band.offset_bottom = 188.0
+	else:
+		band.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
+		band.offset_top = -140.0
+	add_child(band)
+
+
 func _label(text: String, size: int) -> Label:
 	var label := Label.new()
 	label.text = text
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	label.add_theme_font_size_override("font_size", size)
-	label.add_theme_color_override("font_color", Color(0.96, 0.94, 0.9))
+	label.add_theme_color_override("font_color", Color(0.99, 0.97, 0.92))
+	label.add_theme_color_override("font_outline_color", Color(0.04, 0.03, 0.02, 1.0))
+	label.add_theme_constant_override("outline_size", 8)
 	return label
 
 

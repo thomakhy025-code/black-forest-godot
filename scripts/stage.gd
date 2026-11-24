@@ -81,6 +81,11 @@ var focus := Vector3.ZERO
 var actors := {}
 var ghosts: Array = []
 var harvest: Array = []
+var cover: Array = []
+var strikes: Array = []
+var chips: Array = []
+var chip_i := 0
+var thud := 0.0
 var doors: Array = []
 var forges: Array = []
 var flags: Array = []
@@ -150,6 +155,10 @@ func rebuild(match_node) -> void:
 	actors.clear()
 	ghosts.clear()
 	harvest.clear()
+	cover.clear()
+	strikes.clear()
+	chips.clear()
+	thud = 0.0
 	doors.clear()
 	forges.clear()
 	flags.clear()
@@ -163,6 +172,7 @@ func rebuild(match_node) -> void:
 	piles3.clear()
 	aimed = false
 	_build_map()
+	_make_chips()
 
 
 func present(dt: float) -> void:
@@ -172,12 +182,16 @@ func present(dt: float) -> void:
 		return
 	_fit()
 	_sync_actors()
+	_present_world(dt)
+	_feel_strikes(dt)
 	_aim(dt)
 	for id in actors.keys():
 		_present_actor(actors[id], dt)
 	_present_ghosts()
-	_present_world()
+	_tick_chips(dt)
+	_clear_sight(dt)
 	_present_fx()
+	thud = maxf(0.0, thud - dt * 4.2)
 
 
 func _build_view() -> void:
@@ -204,24 +218,24 @@ func _build_view() -> void:
 	view.add_child(world)
 	var env := Environment.new()
 	env.background_mode = Environment.BG_COLOR
-	env.background_color = Color(0.56, 0.78, 0.95)
+	env.background_color = Color(0.40, 0.58, 0.74)
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	env.ambient_light_color = Color(0.8, 0.84, 0.78)
-	env.ambient_light_energy = 0.74
+	env.ambient_light_color = Color(0.52, 0.55, 0.5)
+	env.ambient_light_energy = 0.38
 	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
-	env.tonemap_exposure = 1.06
+	env.tonemap_exposure = 0.84
 	env.fog_enabled = true
 	env.fog_mode = Environment.FOG_MODE_EXPONENTIAL
-	env.fog_light_color = Color(0.72, 0.84, 0.92)
-	env.fog_density = 0.0032
+	env.fog_light_color = Color(0.50, 0.58, 0.64)
+	env.fog_density = 0.002
 	env.fog_aerial_perspective = 0.22
 	var weather := WorldEnvironment.new()
 	weather.environment = env
 	world.add_child(weather)
 	var sun := DirectionalLight3D.new()
 	sun.rotation_degrees = Vector3(-52, -36, 0)
-	sun.light_color = Color(1.0, 0.96, 0.86)
-	sun.light_energy = 1.25
+	sun.light_color = Color(1.0, 0.92, 0.78)
+	sun.light_energy = 0.82
 	sun.shadow_enabled = true
 	sun.shadow_bias = 0.05
 	sun.shadow_normal_bias = 0.8
@@ -230,8 +244,8 @@ func _build_view() -> void:
 	world.add_child(sun)
 	var fill := DirectionalLight3D.new()
 	fill.rotation_degrees = Vector3(-28, 140, 0)
-	fill.light_color = Color(0.75, 0.84, 1.0)
-	fill.light_energy = 0.38
+	fill.light_color = Color(0.62, 0.7, 0.82)
+	fill.light_energy = 0.18
 	fill.shadow_enabled = false
 	world.add_child(fill)
 	camera = Camera3D.new()
@@ -248,6 +262,7 @@ func _build_view() -> void:
 	world.add_child(fx_root)
 	look = SkillLook.new()
 	look.setup(fx_root)
+	_make_chips()
 
 
 func _fit() -> void:
@@ -294,9 +309,9 @@ func _build_map() -> void:
 
 
 func _ground() -> void:
-	var grass := _mat("grass", Color(0.36, 0.58, 0.24), 1.0)
-	var sand := _mat("sand", Color(0.76, 0.66, 0.42), 1.0)
-	var meadow := _mat("meadow", Color(0.48, 0.68, 0.3), 1.0)
+	var grass := _mat("grass", Color(0.26, 0.42, 0.17), 1.0)
+	var sand := _mat("sand", Color(0.62, 0.52, 0.34), 1.0)
+	var meadow := _mat("meadow", Color(0.30, 0.46, 0.2), 1.0)
 	_plane(Vector2(Balance.MAP_W, Balance.MAP_H), Vector3(Balance.MAP_W * 0.5, 0.0, Balance.MAP_H * 0.5), grass)
 	_plane(Vector2(Balance.MAP_W, 4.2), Vector3(Balance.MAP_W * 0.5, 0.006, 2.1), sand)
 	_plane(Vector2(Balance.MAP_W, 4.5), Vector3(Balance.MAP_W * 0.5, 0.006, 47.75), sand)
@@ -422,7 +437,10 @@ func _add_door(door, rect: Rect2) -> void:
 		var tint := Color(1.0, 0.8, 0.76) if int(door.get("team", 0)) == 0 else Color(0.76, 0.84, 1.0)
 		_tint_meshes(gate, tint)
 	_box(Vector3(rect.size.x, 0.07, rect.size.y), Vector3(center.x, 0.04, center.y), _mat("sill", Color(0.55, 0.52, 0.48), 0.9))
-	doors.append({"door": door, "gate": gate})
+	var home := Vector3.ZERO
+	if gate != null:
+		home = gate.position
+	doors.append({"door": door, "gate": gate, "hp": float(door.get("hp", 0.0)), "buzz": 0.0, "home": home})
 
 
 func _corners() -> void:
@@ -508,7 +526,11 @@ func _props() -> void:
 		_cyl(0.4, 0.08, Vector3(sp.x, 0.05, sp.y), _mat("spring", Color(0.4, 0.9, 0.55, 0.9), 0.2))
 	for sewer in sim.sewers:
 		var sv: Vector2 = sewer["pos"]
-		_put("doorway", Vector3(sv.x, 0.0, sv.y), PI, Vector3(0.4, 0.4, 0.4))
+		var mouth := _put("doorway", Vector3(sv.x, 0.0, sv.y), PI, Vector3(0.4, 0.4, 0.4))
+		strikes.append({
+			"src": sewer, "root": mouth, "hp": float(sewer.get("hp", 0.0)),
+			"buzz": 0.0, "kind": "sewer", "at": sv, "scale": Vector3(0.4, 0.4, 0.4),
+		})
 	for vault in sim.vaults:
 		var vp: Vector2 = vault["pos"]
 		var vr := float(vault["r"])
@@ -520,8 +542,13 @@ func _props() -> void:
 		_cake(cake["pos"])
 	for rock in sim.rocks:
 		var rp: Vector2 = rock["pos"]
-		var scl := float(rock["r"]) * 2.3 / 8.1
-		_put("rubble", Vector3(rp.x, 0.0, rp.y), float(_hash2(rp.x, rp.y)) * 0.4, Vector3(scl, scl * 0.85, scl))
+		var rock_s: float = float(rock["r"]) * 2.3 / 8.1
+		var rock_scale := Vector3(rock_s, rock_s * 0.85, rock_s)
+		var stone := _put("rubble", Vector3(rp.x, 0.0, rp.y), float(_hash2(rp.x, rp.y)) * 0.4, rock_scale)
+		strikes.append({
+			"src": rock, "root": stone, "hp": float(rock.get("hp", 0.0)),
+			"buzz": 0.0, "kind": "rock", "at": rp, "scale": rock_scale,
+		})
 	for bank in [Vector2(23.4, 21.5), Vector2(27.2, 27.5), Vector2(64.6, 21.5), Vector2(60.8, 27.5)]:
 		_put("rubble", Vector3(bank.x, 0.0, bank.y), float(_hash2(bank.x, bank.y)) * 0.5, Vector3(0.16, 0.14, 0.16))
 
@@ -578,24 +605,29 @@ func _forest() -> void:
 			root = _animal(pos)
 			scl = Vector3.ONE
 		elif kind == "plant":
-			var bush := 0.22
+			var bush := 0.15
 			root = _tree(pos, "pine_s", bush, float(_hash2(pos.x, pos.y)))
 			scl = Vector3(bush, bush, bush)
-			if root:
-				_tint_meshes(root, Color(0.55, 1.0, 0.48))
 		else:
 			var pick := "pine" if _hash2(pos.x, pos.y) % 2 == 0 else "dead"
-			var tall := 1.15 + float(_hash2(pos.x, pos.y) % 3) * 0.16
+			var tall := 0.62 + float(_hash2(pos.x, pos.y) % 3) * 0.08
 			root = _tree(pos, pick, tall, float(_hash2(pos.y, pos.x)) * 0.7)
 			scl = Vector3(tall, tall, tall)
 		if root == null:
 			continue
-		harvest.append({"src": node, "root": root, "scale": scl, "kind": kind, "phase": float(_hash2(pos.x, pos.y))})
+		var bits: Array = []
+		if kind == "tree":
+			bits = _splinters(root)
+		harvest.append({
+			"src": node, "root": root, "scale": scl, "kind": kind,
+			"phase": float(_hash2(pos.x, pos.y)), "yaw": root.rotation.y,
+			"hp": float(node.get("hp", 0.0)), "buzz": 0.0, "bits": bits,
+		})
 
 
 func _thicket(pos: Vector2, salt: int) -> void:
 	var pick := "dead" if (salt + _hash2(pos.x, pos.y)) % 3 != 0 else "pine"
-	var tall := 1.25 + float(salt % 3) * 0.18
+	var tall := 0.7 + float(salt % 3) * 0.08
 	_tree(pos, pick, tall, float(salt) * 0.8)
 
 
@@ -640,7 +672,7 @@ func _gems() -> void:
 		gems.append(node)
 
 
-func _present_world() -> void:
+func _present_world(dt: float) -> void:
 	for row in doors:
 		var gate: Node3D = row["gate"]
 		if gate == null:
@@ -657,15 +689,46 @@ func _present_world() -> void:
 	for row in harvest:
 		var src = row["src"]
 		var root: Node3D = row["root"]
-		var up := float(src.get("hp", 0.0)) > 0.0
+		var hp := float(src.get("hp", 0.0))
+		var prev_hp := float(row["hp"])
+		row["hp"] = hp
+		var buzz := float(row["buzz"])
+		if hp < prev_hp - 0.05:
+			buzz = 1.0
+			_thump(src["pos"], hp <= 0.0)
+		buzz = maxf(0.0, buzz - dt * 3.4)
+		row["buzz"] = buzz
+		var up := hp > 0.0
 		var base: Vector3 = row["scale"]
-		if str(row["kind"]) == "animal":
+		var yaw := float(row["yaw"])
+		var kind := str(row["kind"])
+		if kind == "animal":
 			root.visible = up
 			if up:
-				root.position.y = sin(float(sim.time) * 2.2 + float(row["phase"])) * 0.035
+				var at: Vector2 = src["pos"]
+				var hop := sin(float(sim.time) * 2.2 + float(row["phase"])) * 0.035
+				var flinch := sin(float(sim.time) * 48.0) * buzz * 0.14
+				root.position = Vector3(at.x + flinch, hop, at.y)
+				root.rotation = Vector3(0.0, yaw, sin(float(sim.time) * 42.0) * buzz * 0.25)
 		else:
 			root.visible = true
-			root.scale = base if up else Vector3(base.x, base.y * 0.14, base.z)
+			var at2: Vector2 = src["pos"]
+			var max_hp := maxf(1.0, float(src.get("max", hp)))
+			var ratio := clampf(hp / max_hp, 0.0, 1.0)
+			if up:
+				var lean := (1.0 - ratio) * 0.42
+				var jx := sin(float(sim.time) * 54.0) * buzz * 0.1
+				var jz := cos(float(sim.time) * 46.0) * buzz * 0.08
+				root.position = Vector3(at2.x, 0.0, at2.y)
+				root.rotation = Vector3(lean * 0.4 + jx, yaw, lean + jz)
+				root.scale = Vector3(base.x * (1.0 + (1.0 - ratio) * 0.1), base.y * lerpf(0.58, 1.0, ratio), base.z)
+			else:
+				root.position = Vector3(at2.x, 0.08, at2.y)
+				root.rotation = Vector3(1.35, yaw, 0.22)
+				root.scale = base * 0.7
+			for bit in row["bits"]:
+				var chip: MeshInstance3D = bit
+				chip.visible = up and ratio < 0.9
 	for row in flags:
 		var owner := int(row["src"].get("owner", -1))
 		var mat: StandardMaterial3D = row["mat"]
@@ -1276,7 +1339,14 @@ func _aim(dt: float) -> void:
 	var wobble := 0.0
 	if float(sim.shake) > 0.05:
 		wobble = sin(float(sim.time) * 47.0) * float(sim.shake) * 0.035
-	camera.global_position = focus + Vector3(wobble, sin(pitch) * dist, cos(pitch) * dist)
+	var buzz_x := 0.0
+	var buzz_y := 0.0
+	var buzz_z := 0.0
+	if thud > 0.02:
+		buzz_x = sin(float(sim.time) * 160.0) * thud * 0.12
+		buzz_y = sin(float(sim.time) * 128.0) * thud * 0.045
+		buzz_z = sin(float(sim.time) * 146.0) * thud * 0.05
+	camera.global_position = focus + Vector3(wobble + buzz_x, sin(pitch) * dist + buzz_y, cos(pitch) * dist + buzz_z)
 	camera.look_at(focus, Vector3.UP)
 
 
@@ -1407,8 +1477,11 @@ func _sphere(radius: float, pos: Vector3, mat: Material) -> MeshInstance3D:
 func _tree(pos: Vector2, key: String, scl: float, yaw: float) -> Node3D:
 	var node := _put(key, Vector3(pos.x, 0.0, pos.y), yaw, Vector3(scl, scl, scl))
 	if node != null and (key == "pine" or key == "pine_s"):
-		# The source pines are yellow and orange. Dye them so the forest reads green.
-		_tint_meshes(node, Color(0.34, 0.82, 0.3))
+		# The source pines are yellow and orange. Dye them a deeper green.
+		var dye := Color(0.22, 0.42, 0.16) if key == "pine" else Color(0.32, 0.5, 0.24)
+		_tint_meshes(node, dye)
+	if node != null:
+		_watch_tree(node, key, scl)
 	return node
 
 
@@ -1604,6 +1677,244 @@ func _hero_key(id: String) -> String:
 	if HERO.has(id):
 		return str(HERO[id])
 	return "knight"
+
+
+func _splinters(parent: Node3D) -> Array:
+	var bits: Array = []
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.62, 0.44, 0.22)
+	mat.roughness = 0.86
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	for i in 4:
+		var bit := MeshInstance3D.new()
+		var box := BoxMesh.new()
+		box.size = Vector3(0.18, 0.05, 0.32)
+		bit.mesh = box
+		bit.material_override = mat
+		bit.position = Vector3((float(i) - 1.5) * 0.12, 0.55 + float(i) * 0.12, 0.22)
+		bit.rotation = Vector3(0.5, float(i) * 0.8, 0.4)
+		bit.visible = false
+		bit.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		parent.add_child(bit)
+		bits.append(bit)
+	for row in cover:
+		if row["root"] == parent:
+			row["mats"].append(mat)
+			break
+	return bits
+
+
+func _watch_tree(node: Node3D, key: String, scl: float) -> void:
+	var tall := 5.0
+	var wide := 2.15
+	if key == "pine_s" or key == "dead_s":
+		tall = 3.2
+		wide = 1.3
+	cover.append({
+		"root": node,
+		"mats": _own_fade(node),
+		"height": scl * tall,
+		"radius": scl * wide,
+		"alpha": 1.0,
+	})
+
+
+func _own_fade(node: Node) -> Array:
+	var found: Array = []
+	var meshes: Array = []
+	if node is MeshInstance3D:
+		meshes.append(node)
+	meshes.append_array(node.find_children("*", "MeshInstance3D", true, false))
+	for mesh in meshes:
+		var mi := mesh as MeshInstance3D
+		if mi == null:
+			continue
+		var mat := mi.get_surface_override_material(0) as StandardMaterial3D
+		if mat == null:
+			var base = mi.get_active_material(0)
+			if base is StandardMaterial3D:
+				mat = (base as StandardMaterial3D).duplicate() as StandardMaterial3D
+			else:
+				mat = StandardMaterial3D.new()
+				mat.albedo_color = Color(0.42, 0.34, 0.2)
+			mi.set_surface_override_material(0, mat)
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+		var tint := mat.albedo_color
+		if tint.a < 0.05:
+			tint.a = 1.0
+			mat.albedo_color = tint
+		found.append(mat)
+	return found
+
+
+func _clear_sight(dt: float) -> void:
+	if camera == null or sim == null:
+		return
+	var cam := camera.global_position
+	var heroes: Array[Vector3] = []
+	for u in sim.units:
+		if u.dead:
+			continue
+		heroes.append(Vector3(u.global_position.x, 1.15, u.global_position.y))
+	var blend := 1.0 - exp(-12.0 * dt)
+	for row in cover:
+		var root: Node3D = row["root"]
+		if root == null or not is_instance_valid(root) or not root.visible:
+			continue
+		var origin := root.global_position
+		var height: float = float(row["height"])
+		var radius: float = float(row["radius"])
+		var mid := origin + Vector3(0.0, height * 0.42, 0.0)
+		var top := origin + Vector3(0.0, height * 0.75, 0.0)
+		var block := false
+		for hero in heroes:
+			var flat := Vector2(origin.x, origin.z).distance_to(Vector2(hero.x, hero.z))
+			if flat < radius * 0.9 or _blocks(cam, hero, mid, radius) or _blocks(cam, hero, top, radius * 0.8):
+				block = true
+				break
+		var goal := 0.2 if block else 1.0
+		var alpha := lerpf(float(row["alpha"]), goal, blend)
+		row["alpha"] = alpha
+		for mat in row["mats"]:
+			var painted := mat as StandardMaterial3D
+			if painted == null:
+				continue
+			var color := painted.albedo_color
+			if alpha > 0.97:
+				painted.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
+				color.a = 1.0
+			else:
+				painted.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+				color.a = alpha
+			painted.albedo_color = color
+
+
+func _blocks(a: Vector3, b: Vector3, p: Vector3, radius: float) -> bool:
+	var ab := b - a
+	var den := ab.length_squared()
+	if den < 0.01:
+		return false
+	var along := clampf((p - a).dot(ab) / den, 0.0, 1.0)
+	if along > 0.9:
+		return false
+	return a.lerp(b, along).distance_to(p) <= radius
+
+
+func _thump(pos: Vector2, broke: bool) -> void:
+	if sim == null or sim.player == null or not is_instance_valid(sim.player):
+		return
+	if sim.player.global_position.distance_to(pos) > 8.5:
+		return
+	thud = minf(1.0, thud + (1.0 if broke else 0.72))
+	Sfx.play("crack" if broke else "chop")
+	_fling(Vector3(pos.x, 0.85, pos.y), broke)
+
+
+func _feel_strikes(dt: float) -> void:
+	for row in strikes:
+		var src = row["src"]
+		var hp := float(src.get("hp", 0.0))
+		var prev := float(row["hp"])
+		row["hp"] = hp
+		var buzz := float(row["buzz"])
+		if hp < prev - 0.05:
+			buzz = 1.0
+			var at: Vector2 = row["at"]
+			_thump(at, hp <= 0.0)
+		buzz = maxf(0.0, buzz - dt * 3.4)
+		row["buzz"] = buzz
+		var root: Node3D = row["root"]
+		if root == null or not is_instance_valid(root):
+			continue
+		if str(row["kind"]) == "rock":
+			root.visible = hp > 0.0
+			var max_hp := maxf(1.0, float(src.get("max", hp)))
+			var ratio := clampf(hp / max_hp, 0.0, 1.0)
+			var base: Vector3 = row["scale"]
+			root.scale = base * lerpf(0.28, 1.0, ratio)
+			root.rotation.z = sin(float(sim.time) * 52.0) * buzz * 0.22
+		else:
+			root.rotation.x = sin(float(sim.time) * 48.0) * buzz * 0.14
+			if hp <= 0.0:
+				root.rotation.z = 0.4
+	for row in doors:
+		var door = row["door"]
+		var hp2 := float(door.get("hp", 0.0))
+		var prev2 := float(row["hp"])
+		row["hp"] = hp2
+		var buzz2 := float(row["buzz"])
+		if hp2 < prev2 - 0.05:
+			buzz2 = 1.0
+			var rect: Rect2 = door["rect"]
+			_thump(rect.get_center(), hp2 <= 0.0)
+		buzz2 = maxf(0.0, buzz2 - dt * 3.4)
+		row["buzz"] = buzz2
+		var gate: Node3D = row["gate"]
+		if gate == null:
+			continue
+		var home: Vector3 = row["home"]
+		var kick := sin(float(sim.time) * 62.0) * buzz2 * 0.08
+		gate.position = home + Vector3(kick, 0.0, cos(float(sim.time) * 50.0) * buzz2 * 0.05)
+
+
+func _make_chips() -> void:
+	chips.clear()
+	chip_i = 0
+	if fx_root == null:
+		return
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.albedo_color = Color(0.78, 0.56, 0.26)
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	for _i in 18:
+		var node := MeshInstance3D.new()
+		var mesh := BoxMesh.new()
+		mesh.size = Vector3(0.12, 0.05, 0.2)
+		node.mesh = mesh
+		node.material_override = mat
+		node.visible = false
+		node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		fx_root.add_child(node)
+		chips.append({"node": node, "vel": Vector3.ZERO, "life": 0.0})
+
+
+func _fling(at: Vector3, broke: bool) -> void:
+	if chips.is_empty():
+		return
+	var n := 7 if broke else 4
+	for i in n:
+		var row = chips[chip_i]
+		chip_i = (chip_i + 1) % chips.size()
+		var node: MeshInstance3D = row["node"]
+		if not is_instance_valid(node):
+			continue
+		var dir := float(i) * 1.17 + float(chip_i)
+		node.visible = true
+		node.position = at
+		row["vel"] = Vector3(cos(dir) * 2.1, 2.4 + float(i % 3) * 0.45, sin(dir) * 2.1)
+		row["life"] = 0.42 if broke else 0.28
+
+
+func _tick_chips(dt: float) -> void:
+	for row in chips:
+		var life := float(row["life"])
+		if life <= 0.0:
+			continue
+		life -= dt
+		row["life"] = life
+		var node: MeshInstance3D = row["node"]
+		if not is_instance_valid(node):
+			continue
+		if life <= 0.0:
+			node.visible = false
+			continue
+		var vel: Vector3 = row["vel"]
+		vel.y -= 9.0 * dt
+		row["vel"] = vel
+		node.position += vel * dt
+		node.rotate_z(9.0 * dt)
 
 
 func _hash2(x: float, y: float) -> int:

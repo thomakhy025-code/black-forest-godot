@@ -10,6 +10,8 @@ const ACCENT := {
 	"saber": 560.0,
 	"swing": 210.0,
 	"swing_fire": 160.0,
+	"chop": 140.0,
+	"crack": 90.0,
 	"throw": 490.0,
 	"dash": 920.0,
 	"explode": 96.0,
@@ -27,6 +29,8 @@ const _TRACK := {
 	"ice": true,
 	"mega": true,
 	"swing_fire": true,
+	"chop": true,
+	"crack": true,
 }
 
 var _players: Array[AudioStreamPlayer] = []
@@ -67,7 +71,9 @@ func play(id: String, volume_db: float = -6.0) -> void:
 	var loud := volume_db
 	if id == "kill" or id == "mega" or id == "explode" or id == "saber":
 		loud = -1.5
-	elif id == "hit" or id == "swing" or id == "swing_fire" or id == "fireball":
+	elif id == "crack":
+		loud = -2.0
+	elif id == "hit" or id == "swing" or id == "swing_fire" or id == "fireball" or id == "chop":
 		loud = -3.5
 	elif id == "ice" or id == "firesword" or id == "lightning" or id == "dash":
 		loud = -4.5
@@ -170,6 +176,10 @@ func _synth(kind: String) -> AudioStreamWAV:
 			seconds = 2.55
 		"swing_fire":
 			seconds = 0.18
+		"chop":
+			seconds = 0.14
+		"crack":
+			seconds = 0.3
 	var rate := 22050
 	var count := int(rate * seconds)
 	var data := PackedByteArray()
@@ -226,6 +236,17 @@ func _voice(kind: String, k: float, i: int, rate: int, phase: Array) -> float:
 	if kind == "swing_fire":
 		phase[0] += step * 196.0
 		return (n * 0.7 + sin(phase[0]) * 0.25) * pow(1.0 - k, 2.0)
+	if kind == "chop":
+		phase[0] += step * lerpf(220.0, 90.0, k)
+		var knock := sin(phase[0]) * 0.46
+		var bite := n * (0.85 if k < 0.12 else 0.2)
+		return (knock + bite) * pow(1.0 - k, 1.4)
+	if kind == "crack":
+		phase[0] += step * lerpf(160.0, 48.0, k)
+		phase[1] += step * lerpf(420.0, 110.0, k)
+		var snap := n * (1.0 if k < 0.08 else 0.35)
+		var body := sin(phase[0]) * 0.4 + sin(phase[1]) * 0.16
+		return (body + snap) * pow(1.0 - k, 1.15)
 	phase[0] += step * lerpf(78.0, 32.0, k)
 	phase[1] += step * lerpf(117.0, 48.0, k)
 	phase[2] += step * 740.0
