@@ -348,8 +348,146 @@ func _ready() -> void:
 	for forge5 in match_node.forges:
 		if int(forge5.get("team", -1)) == 0:
 			forge5["built"] = false
+	_check_raid()
 	_check_door_stands()
 	_check_stage()
+
+
+func _check_raid() -> void:
+	var by := {}
+	for u in match_node.units:
+		by[str(u.unit_id)] = u
+	var nia = by["nia"]
+	var joss = by["joss"]
+	var pico = by["pico"]
+	var bram = by["bram"]
+	var holt = by["holt"]
+	var sable = by["sable"]
+	var vex = by["vex"]
+	var saved := {}
+	for u in [nia, joss, pico, bram, holt, sable, vex]:
+		saved[u] = {
+			"pos": u.global_position,
+			"weapon": str(u.weapon),
+			"wood": int(u.wood),
+			"hide": int(u.hide),
+			"fiber": int(u.fiber),
+			"lock": u.bot_lock,
+			"task": str(u.bot_task),
+			"fighting": bool(u.bot_fighting),
+		}
+	var sword = null
+	var wand = null
+	for forge in match_node.forges:
+		if int(forge.get("team", -1)) != 0:
+			continue
+		if str(forge.get("weapon", "")) == "sword":
+			sword = forge
+		elif str(forge.get("weapon", "")) == "wand":
+			wand = forge
+	var sword_built: bool = bool(sword.get("built", false))
+	var wand_built: bool = bool(wand.get("built", false))
+	var alarm0: float = float(match_node.attack_left[0])
+	var alarm1: float = float(match_node.attack_left[1])
+	match_node.attack_left[0] = 0.0
+	match_node.attack_left[1] = 0.0
+	for u in [nia, joss, pico, bram]:
+		u.equip_weapon("none", false)
+		u.wood = 0
+		u.hide = 0
+		u.fiber = 0
+		u.bot_lock = null
+		u.bot_task = ""
+		u.bot_fighting = false
+	holt.global_position = joss.global_position + Vector2(1.5, 0.0)
+	holt.force_update_transform()
+	var quiet: Dictionary = match_node.bot_goal(joss)
+	_check("gather beside an enemy", match_node.bot_order(joss) == "supply" and str(quiet.get("kind", "")) != "chase")
+	holt.global_position = saved[holt]["pos"]
+	holt.force_update_transform()
+	match_node.attack_left[0] = 8.0
+	for u in [nia, joss, pico, bram]:
+		u.bot_lock = null
+		u.bot_task = ""
+		u.bot_fighting = false
+	_check("hit, make one weapon", match_node.bot_order(nia) == "supply" and match_node.bot_order(bram) == "supply")
+	var nia_job: Dictionary = match_node.bot_goal(nia)
+	var bram_job: Dictionary = match_node.bot_goal(bram)
+	_check("hit ignores the wand", _raid_item(nia_job) != "fiber" and _raid_item(nia_job) != "wand" and _raid_item(bram_job) != "fiber" and _raid_item(bram_job) != "wand")
+	_check("hit ignores the gate", match_node.bot_order(nia) != "door" and match_node.bot_order(bram) != "door")
+	sword["built"] = true
+	for u in [nia, joss, pico, bram]:
+		u.bot_lock = null
+		u.bot_task = ""
+		u.bot_fighting = false
+	_check("one weapon, go take it", match_node.bot_order(nia) == "arm" and match_node.bot_order(bram) == "arm")
+	var take: Dictionary = match_node.bot_goal(bram)
+	var take_ref = take.get("ref", {})
+	_check("take the sword that exists", str(take.get("kind", "")) == "forge" and str(take_ref.get("weapon", "")) == "sword")
+	nia.equip_weapon("sword", false)
+	nia.bot_lock = null
+	nia.bot_task = ""
+	_check("one weapon, fight with it", match_node.bot_order(nia) == "fight")
+	var held: Dictionary = match_node.bot_goal(nia)
+	_check("fight skips the gate and the wand", str(held.get("kind", "")) != "door" and str(held.get("kind", "")) != "forge" and str(held.get("kind", "")) != "node")
+	for u in [nia, joss, pico, bram]:
+		u.equip_weapon("sword", false)
+		u.wood = 0
+		u.hide = 0
+		u.fiber = 0
+		u.bot_lock = null
+		u.bot_task = ""
+		u.bot_fighting = false
+	holt.global_position = nia.global_position + Vector2(-3.2, 0.0)
+	sable.global_position = Vector2(26, 22)
+	vex.global_position = Vector2(26, 29)
+	holt.force_update_transform()
+	sable.force_update_transform()
+	vex.force_update_transform()
+	_check("crowd, close one fights", match_node.bot_order(nia) == "fight")
+	_check("crowd, some make the other weapon", match_node.bot_order(bram) == "supply" and match_node.bot_order(joss) == "supply")
+	_check("crowd, some raise the gate", match_node.bot_order(pico) == "door")
+	bram.fiber = 1
+	bram.bot_lock = null
+	bram.bot_task = ""
+	var other: Dictionary = match_node.bot_goal(bram)
+	var other_ref = other.get("ref", {})
+	_check("other weapon is the wand", str(other.get("kind", "")) == "forge" and str(other_ref.get("weapon", "")) == "wand")
+	pico.equip_weapon("none", false)
+	pico.bot_lock = null
+	pico.bot_task = ""
+	pico.bot_fighting = false
+	_check("gate crew arms first", match_node.bot_order(pico) == "arm")
+	holt.global_position = Vector2(24, 25)
+	holt.force_update_transform()
+	nia.bot_fighting = false
+	_check("steps back, gate crew returns", match_node.bot_order(nia) == "door")
+	sword["built"] = sword_built
+	wand["built"] = wand_built
+	match_node.attack_left[0] = alarm0
+	match_node.attack_left[1] = alarm1
+	for u in [nia, joss, pico, bram, holt, sable, vex]:
+		var row: Dictionary = saved[u]
+		u.global_position = row["pos"]
+		u.force_update_transform()
+		u.wood = int(row["wood"])
+		u.hide = int(row["hide"])
+		u.fiber = int(row["fiber"])
+		u.equip_weapon(str(row["weapon"]), false)
+		u.bot_lock = row["lock"]
+		u.bot_task = str(row["task"])
+		u.bot_fighting = bool(row["fighting"])
+	match_node.attack_left[0] = 0.0
+	match_node.attack_left[1] = 0.0
+
+
+func _raid_item(job: Dictionary) -> String:
+	var ref = job.get("ref", null)
+	if ref == null:
+		return ""
+	if str(job.get("kind", "")) == "forge":
+		return str(ref.get("weapon", ""))
+	return str(ref.get("item", ""))
 
 
 func _check_door_stands() -> void:

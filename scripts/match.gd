@@ -20,6 +20,7 @@ var time := 0.0
 var clock := Balance.MATCH_TIME
 var takedowns := [0, 0]
 var shake := 0.0
+var attack_left: Array = [0.0, 0.0]
 var units: Array = []
 var player = null
 var diamonds: Array = []
@@ -284,6 +285,11 @@ func _poll_actions() -> void:
 
 func tick(dt: float) -> void:
 	time += dt
+	for side in 2:
+		if float(attack_left[side]) > 0.0 and enemies_pressing(side) > 0:
+			attack_left[side] = 8.0
+		else:
+			attack_left[side] = maxf(0.0, float(attack_left[side]) - dt)
 	for d in diamonds:
 		if d.throw_lock > 0.0:
 			d.throw_lock -= dt
@@ -892,9 +898,23 @@ func team_ready(team_id: int) -> bool:
 
 
 func bot_order(u) -> String:
-	# One job at a time. The host runs this for online robots too.
+	# Quiet minutes stay on one job: both machines, then the gates, then a weapon.
+	# A hit on the team, or on its gate, opens a raid. One or two attackers means
+	# finish a single weapon and fight with it. A crowd splits the robots: some
+	# build the other weapon, some raise the gates while they already hold one.
+	# An attacker who steps in close is fought on the spot.
 	if u.carrying != null:
+		u.bot_fighting = false
 		return "home"
+	if not _under_attack(int(u.team)):
+		if str(u.weapon) != "none" and _enemy_close(u):
+			return "fight"
+		u.bot_fighting = false
+		return _peace_order(u)
+	return _raid_order(u)
+
+
+func _peace_order(u) -> String:
 	if not Supply.machines_ready(self, int(u.team)):
 		return "supply"
 	if not Supply.gates_ready(self, int(u.team)):
@@ -904,7 +924,99 @@ func bot_order(u) -> String:
 	return "fight"
 
 
+func _raid_order(u) -> String:
+	var team_id := int(u.team)
+	var armed := str(u.weapon) != "none"
+	if Supply.weapons_made(self, team_id) <= 0:
+		if not armed:
+			u.bot_fighting = false
+			return "supply"
+		if _enemy_close(u) or enemies_pressing(team_id) < 3:
+			return "fight"
+		if _swarm_duty(u) == "door" and not Supply.gates_ready(self, team_id):
+			return "door"
+		return "fight"
+	if armed and _enemy_close(u):
+		return "fight"
+	if enemies_pressing(team_id) < 3:
+		return "fight" if armed else "arm"
+	var duty := _swarm_duty(u)
+	if duty == "second" and Supply.weapons_made(self, team_id) < 2:
+		return "supply" if armed else "arm"
+	if duty == "door" and not Supply.gates_ready(self, team_id):
+		return "door" if armed else "arm"
+	return "fight" if armed else "arm"
+
+
+func _under_attack(team_id: int) -> bool:
+	return team_id >= 0 and team_id <= 1 and float(attack_left[team_id]) > 0.0
+
+
+func note_attack(team_id: int) -> void:
+	if team_id < 0 or team_id > 1:
+		return
+	attack_left[team_id] = 8.0
+
+
+func enemies_pressing(team_id: int) -> int:
+	if not _under_attack(team_id):
+		return 0
+	var n := 0
+	for o in units:
+		if o.dead or int(o.team) == team_id:
+			continue
+		if _pressing(o, team_id):
+			n += 1
+	return n
+
+
+func _pressing(enemy, team_id: int) -> bool:
+	if _inside_yard(enemy.global_position, team_id):
+		return true
+	if enemy.global_position.distance_to(_yard_exit(team_id)) <= 10.0:
+		return true
+	for ally in units:
+		if ally.dead or int(ally.team) != team_id:
+			continue
+		if enemy.global_position.distance_to(ally.global_position) <= 14.0:
+			return true
+	return false
+
+
+func _enemy_close(u) -> bool:
+	if str(u.weapon) == "none":
+		u.bot_fighting = false
+		return false
+	var limit := 6.4 if str(u.weapon) == "wand" else 4.2
+	if bool(u.bot_fighting):
+		limit += 1.6
+	var foe = nearest_enemy(u, limit)
+	u.bot_fighting = foe != null
+	return foe != null
+
+
+func _swarm_duty(u) -> String:
+	var ids := PackedStringArray()
+	for o in units:
+		if o.dead or o.is_player or int(o.team) != int(u.team):
+			continue
+		ids.append(str(o.unit_id))
+	ids.sort()
+	var n := ids.size()
+	if n <= 1:
+		return "fight"
+	var makers := int(n / 2)
+	var idx := ids.find(str(u.unit_id))
+	if idx >= 0 and idx < makers:
+		return "second"
+	return "door"
+
+
 func bot_goal(u) -> Dictionary:
+	var order := bot_order(u)
+	if str(u.bot_task) != order:
+		u.bot_task = order
+		u.bot_lock = null
 	return _hold_job(u, _fresh_bot_goal(u))
 
 
@@ -912,15 +1024,27 @@ func _fresh_bot_goal(u) -> Dictionary:
 	var order := bot_order(u)
 	if order == "home":
 		return {"pos": vaults[u.team]["pos"], "unit": null, "kind": "move"}
-	if order != "fight":
-		var job: Dictionary = Supply.bot_goal(self, u)
-		if not job.is_empty():
-			return job
-		return {"pos": _yard_exit(u.team), "unit": null, "kind": "move"}
-	var close = nearest_enemy(u, 2.5)
-	if close != null:
-		return {"pos": close.global_position, "unit": close, "kind": "chase"}
-	return _steal_goal(u)
+	if order == "fight":
+		var reach := 4.2
+		if str(u.weapon) == "wand":
+			reach = 6.4
+		if bool(u.bot_fighting):
+			reach += 1.6
+		if _under_attack(int(u.team)):
+			reach = 28.0
+		var foe = nearest_enemy(u, reach)
+		if foe != null:
+			return {"pos": foe.global_position, "unit": foe, "kind": "chase"}
+		if _under_attack(int(u.team)):
+			var mine = diamonds[int(u.team)]
+			if mine != null and mine.carrier != null and int(mine.carrier.team) != int(u.team):
+				return {"pos": mine.carrier.global_position, "unit": mine.carrier, "kind": "chase"}
+			return {"pos": _yard_exit(int(u.team)), "unit": null, "kind": "move"}
+		return _steal_goal(u)
+	var job: Dictionary = Supply.bot_goal(self, u, order)
+	if not job.is_empty():
+		return job
+	return {"pos": _yard_exit(u.team), "unit": null, "kind": "move"}
 
 
 func _steal_goal(u) -> Dictionary:
@@ -1515,6 +1639,8 @@ func try_hit(target, amount: float, src, color: Color) -> bool:
 	amount = mitigated(target, amount)
 	target.hp -= amount
 	target.hit_flash = 0.12
+	if src != null and int(src.team) != int(target.team):
+		note_attack(int(target.team))
 	float_at(target.global_position + Vector2(0, -0.9), str(int(round(amount))), color)
 	shake = minf(1.0, shake + (0.35 if target.is_player else 0.12))
 	_sfx("hit")
@@ -1998,6 +2124,8 @@ func damage_door(w, amount: float) -> void:
 	var before := float(w["hp"])
 	w["hp"] = maxf(0.0, before - amount)
 	w["shape"].disabled = float(w["hp"]) <= 0.0
+	if before > float(w["hp"]):
+		note_attack(int(w.get("team", -1)))
 	_show_record(w, float(w["hp"]) > 0.0)
 	if float(w["hp"]) <= 0.0 and before > 0.0:
 		w["wood"] = 0

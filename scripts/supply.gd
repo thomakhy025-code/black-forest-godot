@@ -107,6 +107,8 @@ static func on_respawn(u) -> void:
 	u.fiber = 0
 	u.equip_weapon("none", false)
 	u.bot_lock = null
+	u.bot_task = ""
+	u.bot_fighting = false
 	u.bot_stuck = false
 	u.bot_stuck_time = 0.0
 	u.bot_corner = ""
@@ -217,19 +219,34 @@ static func gates_ready(match_node, team: int) -> bool:
 	return true
 
 
-static func bot_goal(match_node, u) -> Dictionary:
+static func weapons_made(match_node, team: int) -> int:
+	var n := 0
+	if _is_built(match_node, team, "sword"):
+		n += 1
+	if _is_built(match_node, team, "wand"):
+		n += 1
+	return n
+
+
+static func bot_goal(match_node, u, order: String = "") -> Dictionary:
 	if u.dead or u.carrying != null:
 		return {}
-	if not machines_ready(match_node, int(u.team)):
+	var task := order
+	if task == "":
+		task = "supply"
+		if machines_ready(match_node, int(u.team)):
+			task = "door" if not gates_ready(match_node, int(u.team)) else "arm"
+	if task == "door":
+		return _door_job(match_node, u)
+	if task == "arm":
+		return _arm_job(match_node, u)
+	if task == "supply":
+		if int(u.team) >= 0 and int(u.team) <= 1 and float(match_node.attack_left[int(u.team)]) > 0.0:
+			var forge = _raid_forge(match_node, int(u.team))
+			if forge == null:
+				return {}
+			return _carry_job(match_node, u, forge)
 		return _team_supply(match_node, u)
-	if not gates_ready(match_node, int(u.team)):
-		var door_job: Dictionary = _door_job(match_node, u)
-		if not door_job.is_empty():
-			return door_job
-	if str(u.weapon) == "none":
-		var own = _forge_for(match_node, int(u.team), _wanted(u))
-		if own != null and bool(own.get("built", false)):
-			return {"pos": own["pos"], "unit": null, "kind": "forge", "ref": own}
 	return {}
 
 
@@ -254,7 +271,7 @@ static func lock_ok(match_node, u, lock: Dictionary) -> bool:
 		if ref == null:
 			return false
 		if bool(ref.get("built", false)):
-			if str(u.weapon) != "none" or not gates_ready(match_node, int(u.team)):
+			if str(u.weapon) != "none":
 				return false
 		elif not _holding_for(u, ref):
 			return false
@@ -758,6 +775,16 @@ static func _pile_useful(match_node, u, reach: float) -> bool:
 static func _wants_item(match_node, u, item: String) -> bool:
 	if int(u.get(item)) >= Balance.BAG_CAP:
 		return false
+	# A raid with no weapon yet is one forge. Fiber for the other forge, and
+	# wood for the gate, wait until that first weapon exists.
+	if str(u.weapon) == "none" and int(u.team) >= 0 and int(u.team) <= 1 and float(match_node.attack_left[int(u.team)]) > 0.0:
+		if weapons_made(match_node, int(u.team)) > 0:
+			return false
+		var raid = _raid_forge(match_node, int(u.team))
+		if raid == null or bool(raid.get("built", false)):
+			return false
+		var raid_need := _remaining(raid)
+		return int(raid_need.get(item, 0)) > int(u.get(item))
 	for machine in ["sword", "wand"]:
 		var forge = _forge_for(match_node, int(u.team), machine)
 		if forge == null or bool(forge.get("built", false)):
@@ -802,6 +829,61 @@ static func _forge_for(match_node, team: int, kind: String):
 	for forge in match_node.forges:
 		if int(forge.get("team", -1)) == team and str(forge.get("weapon", "")) == kind:
 			return forge
+	return null
+
+
+static func _is_built(match_node, team: int, kind: String) -> bool:
+	var forge = _forge_for(match_node, team, kind)
+	return forge != null and bool(forge.get("built", false))
+
+
+static func _raid_forge(match_node, team: int):
+	# One weapon first. The forge that already has materials wins. A tie is the sword.
+	# Once that one is standing, the next call is the forge that is still dark.
+	var sword = _forge_for(match_node, team, "sword")
+	var wand = _forge_for(match_node, team, "wand")
+	var sword_built := _is_built(match_node, team, "sword")
+	var wand_built := _is_built(match_node, team, "wand")
+	if sword_built and wand_built:
+		return null
+	if sword_built:
+		return wand
+	if wand_built:
+		return sword
+	if _stocked(wand) > _stocked(sword):
+		return wand
+	return sword if sword != null else wand
+
+
+static func _stocked(forge) -> int:
+	if forge == null:
+		return -1
+	return int(forge.get("wood", 0)) + int(forge.get("hide", 0)) + int(forge.get("fiber", 0))
+
+
+static func _arm_job(match_node, u) -> Dictionary:
+	if str(u.weapon) != "none":
+		return {}
+	var origin: Vector2 = u.global_position
+	var drop = _nearest_drop(match_node, origin, 16.0)
+	var forge = _pickup_forge(match_node, u)
+	if drop != null and (forge == null or origin.distance_to(drop["pos"]) <= origin.distance_to(forge["pos"])):
+		return {"pos": drop["pos"], "unit": null, "kind": "drop", "ref": drop}
+	if forge != null:
+		return {"pos": forge["pos"], "unit": null, "kind": "forge", "ref": forge}
+	return {}
+
+
+static func _pickup_forge(match_node, u):
+	var team := int(u.team)
+	var want := _wanted(u)
+	var preferred = _forge_for(match_node, team, want)
+	if preferred != null and bool(preferred.get("built", false)):
+		return preferred
+	var other_kind := "wand" if want == "sword" else "sword"
+	var other = _forge_for(match_node, team, other_kind)
+	if other != null and bool(other.get("built", false)):
+		return other
 	return null
 
 
