@@ -282,6 +282,11 @@ var nshard := 0
 var nflash := 0
 var impacts: Array = []
 var remembered: Array = []
+## Slash spends most of the channel raised. The last fifth is the downward cut.
+const SLASH_CHARGE := 0.80
+const SLASH_RAISED := 5.8
+var host = null
+var charge_at: Dictionary = {}
 
 
 func setup(fx_root: Node3D) -> void:
@@ -327,6 +332,8 @@ func reset() -> void:
 	flashes.clear()
 	impacts.clear()
 	remembered.clear()
+	charge_at.clear()
+	host = null
 	nq = 0
 	np = 0
 	nh = 0
@@ -348,6 +355,7 @@ func draw(sim, camera: Camera3D) -> void:
 	nslash = 0
 	nshard = 0
 	nflash = 0
+	host = sim
 	if root == null or camera == null or sim == null:
 		_hide()
 		return
@@ -409,11 +417,11 @@ func _unit(u, camera: Camera3D, time: float, client: bool) -> void:
 		_lane(at - back, facing, Balance.DASH_DIST, 1.35, Color(0.65, 0.92, 1.0, 0.28))
 		_face(camera, MARK["spark-active"], Vector3(at.x, 1.2, at.y), Vector2(3.4, 1.05), facing, 1.0)
 	if u.channel != null and str(u.channel.kind) == "saber":
-		var saber_dur: float = maxf(0.05, float(u.channel.dur))
-		var saber_along: float = clampf(1.0 - float(u.channel.t) / saber_dur, 0.0, 1.0)
+		var saber_along: float = saber_progress(u, time)
 		_saber_look(camera, u.channel.pos, float(u.channel.ang), float(u.channel.len), 1.0, time, saber_along, 0.0)
 	elif client and int(u.net_pose) == 4 and int(u.net_skill) == 3:
-		_saber_look(camera, at, facing, Balance.SABER_LEN, 1.0, time, 1.0, 0.0)
+		var remote_along: float = saber_progress(u, time)
+		_saber_look(camera, at, facing, Balance.SABER_LEN, 1.0, time, remote_along, 0.0)
 	if u.channel != null and str(u.channel.kind) == "mega":
 		var pulse := 0.86 + 0.14 * sin(time * 6.0)
 		var mega_at: Vector2 = u.channel.pos
@@ -454,8 +462,6 @@ func _casting(u, at: Vector2, facing: float, camera: Camera3D, time: float) -> v
 		_ribbon(camera, "spark", at, facing, Balance.DASH_DIST, 1.35, 0.35 + along * 0.45, time)
 		_lane(at, facing, Balance.DASH_DIST, 1.2, Color(0.62, 0.9, 1.0, 0.16 + along * 0.22))
 		_face(camera, MARK["spark-prepare"], Vector3(at.x, 1.15, at.y), Vector2(2.4 + along, 0.8), facing, 0.9)
-	elif name == "ember":
-		_saber_look(camera, at, facing, Balance.SABER_LEN, 0.45 + along * 0.4, time, along, 0.0)
 	elif name == "fireball":
 		var hand: Vector2 = at + fwd * 0.7
 		var spark_n := 0
@@ -525,32 +531,255 @@ func _swing(u, camera: Camera3D, client: bool) -> void:
 	_face(camera, MARK[stamp], Vector3(at.x + fwd.x, 1.1, at.y + fwd.y), Vector2(wide, wide), facing, (1.0 if hot else 0.82) * fade)
 
 
-func _saber_look(camera: Camera3D, origin: Vector2, ang: float, length: float, alpha: float, _time: float, along: float = 1.0, hit: float = 0.0) -> void:
-	if alpha <= 0.02:
-		return
-	_lane(origin, ang, length, Balance.SABER_W, Color(1.0, 0.46, 0.08, 0.16 * alpha))
-	if slash_mesh == null:
-		return
-	var sweep: float = clampf(along / 0.13, 0.0, 1.0)
+func saber_progress(u, _time: float) -> float:
+	var id := str(u.unit_id)
+	if u.channel != null and str(u.channel.kind) == "saber":
+		var dur: float = maxf(0.05, float(u.channel.dur))
+		return clampf(1.0 - float(u.channel.t) / dur, 0.0, 1.0)
+	# The snapshot has no channel clock. A remote pose keeps its own 3s charge.
+	if int(u.net_pose) == 4 and int(u.net_skill) == 3:
+		var now := Time.get_ticks_msec()
+		if not charge_at.has(id):
+			charge_at[id] = now
+		var elapsed := float(now - int(charge_at[id])) / 1000.0
+		return clampf(elapsed / Balance.SABER_TIME, 0.0, 1.0)
+	charge_at.erase(id)
+	return -1.0
+
+
+func blade_frame(origin: Vector2, ang: float, along: float, reach: float) -> Dictionary:
 	var forward := Vector3(cos(ang), 0.0, sin(ang))
 	var side := Vector3(-forward.z, 0.0, forward.x)
 	var up := Vector3.UP
-	var at := Vector3(origin.x, 0.0, origin.y)
-	var ghost: float = clampf(sweep - 0.12, 0.0, 1.0)
-	_slash_band(at - forward * 0.1 + up * 0.06, forward, up, side, 1.16, 1.5, ghost, alpha * 0.38, 0.82)
-	_slash_band(at, forward, up, side, 1.0, 1.0, sweep, alpha, 0.0)
-	if sweep < 0.5:
+	var ground := _feet(origin)
+	var g: float = clampf(along / SLASH_CHARGE, 0.0, 1.0)
+	var grow: float = g * g * (3.0 - 2.0 * g)
+	var swing := 0.0
+	if along > SLASH_CHARGE:
+		var s: float = clampf((along - SLASH_CHARGE) / (1.0 - SLASH_CHARGE), 0.0, 1.0)
+		swing = s * s * (3.0 - 2.0 * s)
+	var raised: float = SLASH_RAISED
+	var full: float = maxf(reach, raised)
+	var length: float = lerpf(2.2, raised, grow)
+	var stretch := 0.0
+	if swing > 0.25:
+		var k: float = clampf((swing - 0.25) / 0.75, 0.0, 1.0)
+		stretch = k * k
+	if swing > 0.0:
+		length = lerpf(raised, full, stretch)
+	var pitch: float = swing * PI * 0.5
+	var tip_dir := (up * cos(pitch) + forward * sin(pitch)).normalized()
+	var grip_y: float = lerpf(2.05, 0.1, swing)
+	var grip_fwd: float = lerpf(0.08, 0.15, swing)
+	var grip := Vector3(origin.x, ground + grip_y, origin.y) + forward * grip_fwd + side * (-0.22)
+	var width: float = lerpf(0.5, 1.35, grow)
+	var thick: float = lerpf(0.28, 0.62, grow)
+	if swing > 0.0:
+		width = lerpf(1.35, 1.55, swing)
+		thick = lerpf(0.62, 0.75, swing)
+	return {
+		"grip": grip,
+		"tip": grip + tip_dir * length,
+		"tip_dir": tip_dir,
+		"side": side,
+		"forward": forward,
+		"length": length,
+		"width": width,
+		"thick": thick,
+		"grow": grow,
+		"swing": swing,
+		"ground": ground,
+		"reach": full,
+	}
+
+
+func _saber_look(camera: Camera3D, origin: Vector2, ang: float, length: float, alpha: float, time: float, along: float = 1.0, hit: float = 0.0) -> void:
+	if alpha <= 0.02:
 		return
-	var tip := _slash_world(at, forward, up, side, 1.0, 0.0, 0.0)
-	var radial := forward * cos(SLASH_ARC1) + up * sin(SLASH_ARC1)
-	var swing := forward * sin(SLASH_ARC1) + up * (-cos(SLASH_ARC1))
-	var flash_s: float = lerpf(1.25, 1.85, sweep)
-	var flash_a: float = alpha * 0.8
+	var frame := blade_frame(origin, ang, along, length)
+	var swing: float = float(frame["swing"])
 	if hit > 0.5:
-		flash_s = lerpf(2.35, 0.55, 1.0 - alpha)
-		flash_a = alpha
-	_slash_flash(camera, tip, flash_s, flash_a)
-	_slash_shards(camera, tip, forward, up, side, radial, swing, alpha, _time, ang, sweep, hit)
+		_ground_scar(origin, ang, length, clampf(alpha / 0.25, 0.0, 1.0), float(frame["ground"]))
+		if alpha > 0.45:
+			_split_sparks(camera, origin, ang, length, time, alpha, float(frame["ground"]))
+		return
+	if swing < 0.08:
+		_gather(camera, frame, origin, time, ang, alpha)
+	else:
+		_cling(camera, frame, time, alpha)
+	_blade_sheen(frame, alpha)
+	if swing > 0.72:
+		var scar_a: float = clampf((swing - 0.72) / 0.28, 0.0, 1.0) * alpha
+		_ground_scar(origin, ang, length, scar_a, float(frame["ground"]))
+		_split_sparks(camera, origin, ang, length, time, scar_a, float(frame["ground"]))
+
+
+func _gather(camera: Camera3D, frame: Dictionary, origin: Vector2, time: float, ang: float, alpha: float) -> void:
+	var grip: Vector3 = frame["grip"]
+	var tip: Vector3 = frame["tip"]
+	var forward: Vector3 = frame["forward"]
+	var side: Vector3 = frame["side"]
+	var ground: float = float(frame["ground"])
+	var feet := Vector3(origin.x, ground, origin.y)
+	for i in 20:
+		var seed: float = ang * 1.7 + float(i) * 6.13
+		var period := 0.62
+		var travel: float = fmod(time * 1.05 + _hash01(seed) * period, period) / period
+		var around: float = _hash01(seed + 2.2) * TAU
+		var radius: float = lerpf(1.5, 4.0, _hash01(seed + 1.1))
+		var height: float = lerpf(0.25, 3.6, _hash01(seed + 4.4))
+		var src := feet + forward * cos(around) * radius + side * sin(around) * radius + Vector3.UP * height
+		var dst: Vector3 = grip.lerp(tip, lerpf(0.12, 0.96, _hash01(seed + 8.2)))
+		var at: Vector3 = src.lerp(dst, travel)
+		var life: float = 1.0 - travel * 0.25
+		var size: float = lerpf(0.16, 0.48, _hash01(seed + 5.5)) * life
+		_mote(camera, at, size, alpha * life, _hash01(seed + 3.3) > 0.62)
+	for j in 7:
+		var u: float = _hash01(ang * 3.1 + float(j) * 4.7)
+		var at2: Vector3 = grip.lerp(tip, lerpf(0.15, 0.95, u))
+		at2 += side * sin(time * 5.0 + float(j) * 1.4) * 0.18
+		_mote(camera, at2, lerpf(0.22, 0.4, u), alpha * 0.9, true)
+
+
+func _cling(camera: Camera3D, frame: Dictionary, time: float, alpha: float) -> void:
+	var grip: Vector3 = frame["grip"]
+	var tip: Vector3 = frame["tip"]
+	var side: Vector3 = frame["side"]
+	var tip_dir: Vector3 = frame["tip_dir"]
+	var normal := side.cross(tip_dir)
+	if normal.length_squared() < 0.0001:
+		normal = Vector3.UP
+	else:
+		normal = normal.normalized()
+	for i in 16:
+		var seed: float = float(frame["reach"]) * 0.2 + float(i) * 5.17
+		var u: float = _hash01(seed + 1.7)
+		var at: Vector3 = grip.lerp(tip, lerpf(0.06, 0.98, u))
+		at += side * sin(time * 8.0 + float(i) * 1.2) * 0.16
+		at += normal * sin(time * 6.0 + float(i) * 0.7) * 0.1
+		_mote(camera, at, lerpf(0.18, 0.46, _hash01(seed + 2.4)), alpha, _hash01(seed) > 0.5)
+
+
+func _split_sparks(camera: Camera3D, origin: Vector2, ang: float, length: float, time: float, alpha: float, ground: float) -> void:
+	var forward := Vector3(cos(ang), 0.0, sin(ang))
+	var side := Vector3(-forward.z, 0.0, forward.x)
+	for i in 10:
+		var seed: float = ang * 2.4 + float(i) * 3.9
+		var along: float = _hash01(seed) * length
+		var period := 0.48
+		var travel: float = fmod(time * 1.35 + _hash01(seed + 1.8) * period, period) / period
+		var dir := 1.0 if (i % 2) == 0 else -1.0
+		var at := Vector3(origin.x, ground, origin.y) + forward * along
+		at += side * dir * lerpf(0.15, 1.7, travel)
+		at.y += lerpf(0.12, 0.85, travel)
+		_mote(camera, at, lerpf(0.14, 0.32, _hash01(seed + 4.0)) * (1.0 - travel * 0.4), alpha * (1.0 - travel), true)
+
+
+func _blade_sheen(frame: Dictionary, alpha: float) -> void:
+	var grip: Vector3 = frame["grip"]
+	var tip: Vector3 = frame["tip"]
+	var side: Vector3 = frame["side"]
+	var tip_dir: Vector3 = frame["tip_dir"]
+	var span: float = maxf(grip.distance_to(tip), 0.2)
+	var mid: Vector3 = grip.lerp(tip, 0.55)
+	var normal := side.cross(tip_dir)
+	if normal.length_squared() < 0.0001:
+		normal = Vector3.UP
+	else:
+		normal = normal.normalized()
+	var wide: float = float(frame["width"]) * 0.72
+	var node := _quad()
+	node.scale = Vector3.ONE
+	node.global_transform = Transform3D(Basis(side * wide, tip_dir * span, normal), mid + normal * 0.04)
+	_glow(node, Color(1.0, 0.72, 0.28, 0.42 * alpha))
+	var core := _quad()
+	core.scale = Vector3.ONE
+	core.global_transform = Transform3D(Basis(side * wide * 0.28, tip_dir * span, normal), mid + normal * 0.06)
+	_glow(core, Color(1.0, 0.94, 0.72, 0.7 * alpha))
+
+
+func _ground_scar(origin: Vector2, ang: float, length: float, alpha: float, ground: float) -> void:
+	if alpha <= 0.02 or length < 0.2:
+		return
+	var forward := Vector3(cos(ang), 0.0, sin(ang))
+	var side := Vector3(-forward.z, 0.0, forward.x)
+	var y: float = _scar_y(origin, ground)
+	var mid := Vector3(origin.x, y, origin.y) + forward * (length * 0.5)
+	_flat_decal(mid + Vector3(0.0, 0.02, 0.0), forward, side, length, 0.62, Color(0.03, 0.02, 0.015, 0.94 * alpha))
+	var flap_l := (Vector3.UP - side * 0.55).normalized()
+	var flap_r := (Vector3.UP + side * 0.55).normalized()
+	_flat_decal(mid - side * 0.52 + Vector3.UP * 0.05, forward, side, length, 0.58, Color(0.5, 0.32, 0.16, 0.9 * alpha), flap_l)
+	_flat_decal(mid + side * 0.52 + Vector3.UP * 0.05, forward, side, length, 0.58, Color(0.46, 0.3, 0.15, 0.9 * alpha), flap_r)
+	var trench := _quad()
+	trench.scale = Vector3.ONE
+	trench.global_transform = Transform3D(Basis(forward * length, Vector3.UP * 0.42, side), mid + Vector3.UP * 0.2)
+	_wash(trench, Color(0.05, 0.03, 0.02, 0.88 * alpha))
+	_flat_decal(mid + Vector3.UP * 0.08, forward, side, length, 0.12, Color(1.0, 0.78, 0.34, 0.95 * alpha), Vector3.UP, true)
+
+
+func _mote(camera: Camera3D, pos: Vector3, size: float, alpha: float, hot: bool) -> void:
+	if alpha <= 0.02 or size <= 0.02 or card_mesh == null:
+		return
+	var node := _take(spark_nodes, ns, card_mesh, spark_shader, 12)
+	ns += 1
+	node.global_transform = Transform3D(camera.global_basis, pos)
+	node.scale = Vector3(size, size, 1.0)
+	var mat: ShaderMaterial = node.material_override as ShaderMaterial
+	mat.set_shader_parameter("fade", alpha)
+	if hot:
+		mat.set_shader_parameter("spark_color", Color(2.6, 2.15, 1.15, 1.0))
+	else:
+		mat.set_shader_parameter("spark_color", Color(2.1, 1.15, 0.4, 1.0))
+
+
+func _glow(node: MeshInstance3D, color: Color) -> void:
+	var mat: StandardMaterial3D = node.material_override
+	mat.albedo_texture = null
+	mat.albedo_color = Color(color.r, color.g, color.b, color.a)
+	mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.uv1_offset = Vector3.ZERO
+
+
+func _flat_decal(mid: Vector3, forward: Vector3, side: Vector3, length: float, width: float, color: Color, normal: Vector3 = Vector3.UP, add: bool = false) -> void:
+	var y_axis := normal.normalized()
+	var x_axis := y_axis.cross(forward)
+	if x_axis.length_squared() < 0.0001:
+		x_axis = side.normalized()
+	else:
+		x_axis = x_axis.normalized()
+	var z_axis := x_axis.cross(y_axis)
+	if z_axis.length_squared() < 0.0001:
+		z_axis = forward.normalized()
+	else:
+		z_axis = z_axis.normalized()
+	var node := _plane()
+	node.scale = Vector3.ONE
+	node.global_transform = Transform3D(Basis(x_axis * width, y_axis, z_axis * length), mid)
+	if add:
+		_glow(node, color)
+	else:
+		_wash(node, color)
+
+
+func _feet(p: Vector2) -> float:
+	var y := 0.04
+	if host == null:
+		return y
+	var stage_node = host.get("stage")
+	if stage_node != null and stage_node.has_method("_feet_y"):
+		y = float(stage_node.call("_feet_y", p))
+	return y
+
+
+func _scar_y(p: Vector2, ground: float) -> float:
+	var y := ground + 0.07
+	if host == null:
+		return y
+	var stage_node = host.get("stage")
+	if stage_node != null and stage_node.has_method("_wet") and bool(stage_node.call("_wet", p)):
+		y = maxf(y, 0.54)
+	return y
 
 
 func _slash_band(at: Vector3, forward: Vector3, up: Vector3, side: Vector3, radial_scale: float, side_scale: float, sweep: float, fade: float, heat: float) -> void:

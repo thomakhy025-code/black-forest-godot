@@ -1427,8 +1427,8 @@ func detonate_saber(u, ch) -> void:
 		fx.ang = ch.ang
 		fx.len = ch.len
 		fx.w = ch.w
-		fx.t = 0.9
-		fx.dur = 0.9
+		fx.t = 1.0
+		fx.dur = 1.0
 		saber_fx.append(fx)
 	shake = 1.15
 	Sfx.stop_bed()
@@ -2916,8 +2916,8 @@ func _spawn_remote_saber(pos: Vector2, facing: float) -> void:
 	fx.ang = facing
 	fx.len = Balance.SABER_LEN
 	fx.w = Balance.SABER_W
-	fx.t = 0.9
-	fx.dur = 0.9
+	fx.t = 1.0
+	fx.dur = 1.0
 	saber_fx.append(fx)
 
 

@@ -195,6 +195,8 @@ func present(dt: float) -> void:
 		return
 	_fit()
 	_sync_actors()
+	if look != null:
+		look.host = sim
 	_present_world(dt)
 	_feel_strikes(dt)
 	_aim(dt)
@@ -973,12 +975,19 @@ func _make_actor(u) -> Dictionary:
 	light.position = Vector3(0, 0.9, 0)
 	light.visible = false
 	root.add_child(light)
+	var blade := MeshInstance3D.new()
+	blade.name = "SlashBlade"
+	blade.visible = false
+	blade.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	blade.gi_mode = GeometryInstance3D.GI_MODE_DISABLED
+	root.add_child(blade)
 	return {
 		"root": root, "model": model, "anim": anim, "unit": u, "props": props, "by": by,
 		"gear": "", "shown": null, "light": light, "fill": fill, "fill_mat": fill_mat,
 		"bar": bar, "clip": "", "prev": u.global_position, "wind": 0.0, "swing": 0.0,
 		"pose": -1, "hp": float(u.hp), "react": 0.0,
 		"trail": 0.0, "trail_t": 0.0, "speed": 0.0, "loco": "",
+		"blade": blade, "blade_token": "",
 	}
 
 
@@ -1038,6 +1047,7 @@ func _present_actor(actor: Dictionary, dt: float) -> void:
 	actor["pose"] = int(u.net_pose)
 	_play(actor, clip, spd, restart)
 	_gear(actor, str(u.weapon), float(u.fire_sword_t) > 0.0 and int(u.fire_sword_hits) > 0)
+	_pose_slash(actor)
 	var ratio := 0.0
 	if float(u.max_hp) > 0.01:
 		ratio = clampf(float(u.hp) / float(u.max_hp), 0.0, 1.0)
@@ -1193,6 +1203,102 @@ func _gear(actor: Dictionary, weapon: String, burning: bool) -> void:
 	var light: OmniLight3D = actor["light"]
 	if light:
 		light.visible = burning
+
+
+func _pose_slash(actor: Dictionary) -> void:
+	var blade: MeshInstance3D = actor.get("blade")
+	if blade == null or not is_instance_valid(blade):
+		return
+	var u = actor["unit"]
+	var along := -1.0
+	if look != null and u != null:
+		along = look.saber_progress(u, float(sim.time))
+	var shown: MeshInstance3D = actor.get("shown") as MeshInstance3D
+	if along < 0.0 or look == null:
+		blade.visible = false
+		if shown != null and is_instance_valid(shown):
+			shown.visible = true
+		return
+	var src := _slash_source(actor)
+	if src == null:
+		blade.visible = false
+		if shown != null and is_instance_valid(shown):
+			shown.visible = true
+		return
+	src.visible = false
+	var token := str(actor.get("gear", "")) + str(src.get_instance_id())
+	if str(actor.get("blade_token", "")) != token or blade.mesh != src.mesh:
+		actor["blade_token"] = token
+		_slash_skin(blade, src)
+	var origin: Vector2 = u.global_position
+	var ang: float = float(u.facing)
+	var reach: float = Balance.SABER_LEN
+	if u.channel != null and str(u.channel.kind) == "saber":
+		origin = u.channel.pos
+		ang = float(u.channel.ang)
+		reach = float(u.channel.len)
+	var frame: Dictionary = look.blade_frame(origin, ang, along, reach)
+	_place_blade(blade, frame)
+	var glow: StandardMaterial3D = blade.material_override as StandardMaterial3D
+	if glow != null:
+		glow.emission_energy_multiplier = lerpf(0.35, 2.8, float(frame["grow"]))
+	var model: Node3D = actor["model"]
+	blade.visible = model == null or model.visible
+
+
+func _slash_source(actor: Dictionary) -> MeshInstance3D:
+	var shown: MeshInstance3D = actor.get("shown") as MeshInstance3D
+	if shown != null and is_instance_valid(shown) and shown.mesh != null:
+		return shown
+	var by: Dictionary = actor["by"]
+	for want in ["1H_Sword", "1H_Axe", "Knife", "2H_Sword", "2H_Axe", "2H_Staff", "1H_Wand"]:
+		if not by.has(want):
+			continue
+		var found: MeshInstance3D = by[want] as MeshInstance3D
+		if found != null and is_instance_valid(found) and found.mesh != null:
+			return found
+	return null
+
+
+func _slash_skin(blade: MeshInstance3D, src: MeshInstance3D) -> void:
+	blade.mesh = src.mesh
+	var mat := StandardMaterial3D.new()
+	var base: Material = src.get_active_material(0)
+	if base is StandardMaterial3D:
+		var baked := base as StandardMaterial3D
+		mat.albedo_texture = baked.albedo_texture
+		mat.albedo_color = baked.albedo_color
+		mat.texture_filter = baked.texture_filter
+	mat.roughness = 0.58
+	mat.emission_enabled = true
+	mat.emission = Color(1.0, 0.62, 0.18)
+	mat.emission_energy_multiplier = 0.4
+	blade.material_override = mat
+
+
+func _place_blade(blade: MeshInstance3D, frame: Dictionary) -> void:
+	var mesh := blade.mesh
+	if mesh == null:
+		return
+	var aabb := mesh.get_aabb()
+	var len_s: float = float(frame["length"]) / maxf(aabb.size.y, 0.05)
+	var wide_s: float = float(frame["width"]) / maxf(aabb.size.x, 0.02)
+	var thick_s: float = float(frame["thick"]) / maxf(aabb.size.z, 0.02)
+	var tip_dir: Vector3 = frame["tip_dir"]
+	var side: Vector3 = frame["side"]
+	var y_axis := tip_dir * len_s
+	var x_axis := side * wide_s
+	var z_axis := side.cross(tip_dir)
+	if z_axis.length_squared() < 0.0001:
+		z_axis = Vector3.FORWARD
+	else:
+		z_axis = z_axis.normalized()
+	z_axis *= thick_s
+	var basis := Basis(x_axis, y_axis, z_axis)
+	var grip_local := Vector3(aabb.get_center().x, aabb.position.y, aabb.get_center().z)
+	var grip: Vector3 = frame["grip"]
+	blade.scale = Vector3.ONE
+	blade.global_transform = Transform3D(basis, grip - basis * grip_local)
 
 
 func _present_ghosts() -> void:
