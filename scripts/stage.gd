@@ -59,6 +59,13 @@ const HERO := {
 const HERO_SCALE := {
 	"knight": 0.770, "mage": 0.810, "rogue": 0.815, "barbarian": 0.815, "hooded": 0.792,
 }
+# Shallow pond. The floor stays on the ground; the rippled surface meets a 1.78m hero around the knee.
+const POND_FLOOR_Y := 0.0
+const POND_SURFACE_Y := 0.46
+const POND_STEP := 0.4
+# Deck and island tops sit above the ripples so planks and the isle are not under the sheet.
+const BRIDGE_TOP_Y := 0.64
+const ISLAND_TOP_Y := 0.66
 const LOOPY := {
 	"Idle": true, "Unarmed_Idle": true, "Walking_A": true, "Walking_B": true, "Walking_C": true,
 	"Running_A": true, "Running_B": true, "Spellcasting": true, "Blocking": true, "Interact": true,
@@ -93,6 +100,7 @@ var flags: Array = []
 var gems: Array = []
 var mats := {}
 var flat_shader: Shader
+var water_shader: Shader
 # Filmic white is at least 1. Copied from the viewport environment when the view is built.
 var flat_exposure := 0.84
 var flat_white := 1.0
@@ -329,25 +337,27 @@ func _designed_ground() -> void:
 	_sheet_code(1, "meadow", field, 1.0, ground_y, true)
 	_sheet_code(2, "sand", Color(0.62, 0.52, 0.34), 1.0, ground_y)
 	_sheet_code(7, "yard", Color(0.78, 0.68, 0.46), 0.9, ground_y)
-	_sheet_code(8, "isle", Color(0.45, 0.62, 0.3), 1.0, ground_y)
 	_sheet_code(4, "road", Color(0.62, 0.48, 0.28), 0.95, ground_y)
-	_sheet_code(5, "water", lake, 1.0, -0.04, true)
-	_sheet_code(6, "plank", Color(0.56, 0.38, 0.2), 0.82, 0.1)
+	_sheet_code(5, "water", lake, 1.0, POND_FLOOR_Y, true)
+	_pond_surface()
+	_bank(8, "isle", Color(0.45, 0.62, 0.3), 1.0, ISLAND_TOP_Y)
+	_bank(6, "plank", Color(0.56, 0.38, 0.2), 0.82, BRIDGE_TOP_Y)
 	var rock := _mat("mountain", Color(0.45, 0.43, 0.39), 0.95)
 	for rect_item in MapDesign.rects(3):
 		var rect: Rect2 = rect_item
 		var center := rect.get_center()
 		_box(Vector3(rect.size.x, 0.85, rect.size.y), Vector3(center.x, 0.42, center.y), rock)
 	var rail := _mat("rail", Color(0.4, 0.26, 0.14), 0.9)
+	var rail_y := BRIDGE_TOP_Y + 0.11
 	for item in sim.bridges:
 		var span: Rect2 = item
 		var c := span.get_center()
 		if span.size.x >= span.size.y:
-			_box(Vector3(span.size.x, 0.22, 0.08), Vector3(c.x, 0.28, span.position.y + 0.04), rail)
-			_box(Vector3(span.size.x, 0.22, 0.08), Vector3(c.x, 0.28, span.end.y - 0.04), rail)
+			_box(Vector3(span.size.x, 0.22, 0.08), Vector3(c.x, rail_y, span.position.y + 0.04), rail)
+			_box(Vector3(span.size.x, 0.22, 0.08), Vector3(c.x, rail_y, span.end.y - 0.04), rail)
 		else:
-			_box(Vector3(0.08, 0.22, span.size.y), Vector3(span.position.x + 0.04, 0.28, c.y), rail)
-			_box(Vector3(0.08, 0.22, span.size.y), Vector3(span.end.x - 0.04, 0.28, c.y), rail)
+			_box(Vector3(0.08, 0.22, span.size.y), Vector3(span.position.x + 0.04, rail_y, c.y), rail)
+			_box(Vector3(0.08, 0.22, span.size.y), Vector3(span.end.x - 0.04, rail_y, c.y), rail)
 
 
 func _sheet_code(code: int, key: String, color: Color, rough: float, y: float, flat: bool = false) -> void:
@@ -358,6 +368,39 @@ func _sheet_code(code: int, key: String, color: Color, rough: float, y: float, f
 		_quad(st, rect.position.x, rect.position.y, rect.end.x, rect.end.y, y)
 	var mat: Material = _flat_mat(color) if flat else _mat(key, color, rough)
 	_sheet(st, mat)
+
+
+func _bank(code: int, key: String, color: Color, rough: float, top: float) -> void:
+	var mat := _mat(key, color, rough)
+	for rect_item in MapDesign.rects(code):
+		var rect: Rect2 = rect_item
+		var center := rect.get_center()
+		_box(Vector3(rect.size.x, top, rect.size.y), Vector3(center.x, top * 0.5, center.y), mat)
+
+
+func _pond_surface() -> void:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	for rect_item in MapDesign.rects(5):
+		var rect: Rect2 = rect_item
+		_grid(st, rect, POND_SURFACE_Y, POND_STEP)
+	_sheet(st, _pond_mat())
+
+
+func _grid(st: SurfaceTool, rect: Rect2, y: float, step: float) -> void:
+	var x0 := rect.position.x
+	var z0 := rect.position.y
+	var x1 := rect.end.x
+	var z1 := rect.end.y
+	var x := x0
+	while x < x1 - 0.0001:
+		var nx := minf(x + step, x1)
+		var z := z0
+		while z < z1 - 0.0001:
+			var nz := minf(z + step, z1)
+			_quad(st, x, z, nx, nz, y)
+			z = nz
+		x = nx
 
 
 func _code_at(pos: Vector2) -> int:
@@ -649,10 +692,13 @@ func _plank(a: Vector2, b: Vector2) -> void:
 
 
 func _cake(pos: Vector2) -> void:
-	_cyl(0.42, 0.16, Vector3(pos.x, 0.22, pos.y), _mat("icing", Color(0.96, 0.46, 0.62), 0.35))
-	_cyl(0.32, 0.12, Vector3(pos.x, 0.36, pos.y), _mat("cream", Color(0.98, 0.94, 0.86), 0.3))
-	_cyl(0.24, 0.1, Vector3(pos.x, 0.48, pos.y), _mat("icing", Color(0.96, 0.46, 0.62), 0.35))
-	_sphere(0.07, Vector3(pos.x, 0.6, pos.y), _mat("cherry", Color(0.82, 0.12, 0.18), 0.25))
+	var lift := 0.0
+	if _code_at(pos) == 8:
+		lift = ISLAND_TOP_Y
+	_cyl(0.42, 0.16, Vector3(pos.x, 0.22 + lift, pos.y), _mat("icing", Color(0.96, 0.46, 0.62), 0.35))
+	_cyl(0.32, 0.12, Vector3(pos.x, 0.36 + lift, pos.y), _mat("cream", Color(0.98, 0.94, 0.86), 0.3))
+	_cyl(0.24, 0.1, Vector3(pos.x, 0.48 + lift, pos.y), _mat("icing", Color(0.96, 0.46, 0.62), 0.35))
+	_sphere(0.07, Vector3(pos.x, 0.6 + lift, pos.y), _mat("cherry", Color(0.82, 0.12, 0.18), 0.25))
 
 
 func _forest() -> void:
@@ -681,6 +727,8 @@ func _forest() -> void:
 			scl = Vector3(tall, tall, tall)
 		if root == null:
 			continue
+		if _code_at(pos) == 8:
+			root.position.y = ISLAND_TOP_Y
 		var bits: Array = []
 		if kind == "tree":
 			bits = _splinters(root)
@@ -954,11 +1002,7 @@ func _present_actor(actor: Dictionary, dt: float) -> void:
 		actor["speed"] = speed
 		actor["trail"] = 0.0
 		actor["trail_t"] = 0.0
-	var y := 0.04
-	if _on_bridge(p):
-		y = 0.2
-	elif sim.in_water(p):
-		y = -0.28
+	var y := _feet_y(p)
 	if u.hop != null:
 		var dur := maxf(0.05, float(u.hop.dur))
 		var along := clampf(1.0 - float(u.hop.t) / dur, 0.0, 1.0)
@@ -1174,7 +1218,7 @@ func _present_ghosts() -> void:
 		var u = need[i]["unit"]
 		var c = need[i]["clone"]
 		var gp: Vector2 = c.pos
-		root.position = Vector3(gp.x, 0.04, gp.y)
+		root.position = Vector3(gp.x, _feet_y(gp), gp.y)
 		var model: Node3D = g["model"]
 		if model:
 			model.rotation.y = FACE_OFFSET - float(u.facing)
@@ -1439,6 +1483,15 @@ func _on_bridge(p: Vector2) -> bool:
 	return false
 
 
+func _feet_y(p: Vector2) -> float:
+	# Feet stay on the pond floor. The surface, not a sunk body, is what covers the legs.
+	if _on_bridge(p):
+		return BRIDGE_TOP_Y + 0.04
+	if _code_at(p) == 8:
+		return ISLAND_TOP_Y + 0.04
+	return 0.04
+
+
 func _quad(st: SurfaceTool, x0: float, z0: float, x1: float, z1: float, y: float) -> void:
 	# Counter-clockwise from above, so the road faces the camera instead of the dirt.
 	var n := Vector3.UP
@@ -1645,6 +1698,134 @@ func _scene(key: String) -> PackedScene:
 			return PINE_S
 		_:
 			return null
+
+
+func _pond_mat() -> ShaderMaterial:
+	var key := "pond"
+	if mats.has(key):
+		return mats[key] as ShaderMaterial
+	if water_shader == null:
+		water_shader = Shader.new()
+		water_shader.code = _pond_shader_code()
+	var mat := ShaderMaterial.new()
+	mat.shader = water_shader
+	var lake := Color.html("#ADD8E6")
+	mat.set_shader_parameter("target_srgb", Vector3(lake.r, lake.g, lake.b))
+	mat.set_shader_parameter("tone_exposure", flat_exposure)
+	mat.set_shader_parameter("tone_white", flat_white)
+	mats[key] = mat
+	return mat
+
+
+func _pond_shader_code() -> String:
+	return """shader_type spatial;
+render_mode unshaded, blend_mix, depth_draw_opaque, cull_disabled, fog_disabled, shadows_disabled;
+
+uniform vec3 target_srgb;
+uniform float tone_exposure = 0.84;
+uniform float tone_white = 1.0;
+
+varying vec2 world_xz;
+varying float wave_h;
+
+float hash21(vec2 p) {
+	p = fract(p * vec2(123.34, 345.45));
+	p += dot(p, p + 34.345);
+	return fract(p.x * p.y);
+}
+
+float value_noise(vec2 p) {
+	vec2 cell = floor(p);
+	vec2 f = fract(p);
+	f = f * f * (3.0 - 2.0 * f);
+	float a = hash21(cell);
+	float b = hash21(cell + vec2(1.0, 0.0));
+	float c = hash21(cell + vec2(0.0, 1.0));
+	float d = hash21(cell + vec2(1.0, 1.0));
+	return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+
+float cells(vec2 p) {
+	vec2 cell = floor(p);
+	vec2 f = fract(p);
+	float dist = 1.0;
+	for (int iy = -1; iy <= 1; iy++) {
+		for (int ix = -1; ix <= 1; ix++) {
+			vec2 g = vec2(float(ix), float(iy));
+			vec2 jitter = vec2(hash21(cell + g), hash21(cell + g + vec2(19.1, 7.7)));
+			vec2 delta = g + jitter - f;
+			dist = min(dist, dot(delta, delta));
+		}
+	}
+	return sqrt(dist);
+}
+
+float water_roll(vec2 xz) {
+	float n1 = value_noise(xz * 0.31 + vec2(TIME * 0.07, TIME * 0.035));
+	float n2 = value_noise(xz * 0.16 + vec2(-TIME * 0.045, TIME * 0.055) + vec2(8.0, 3.0));
+	return n1 * 0.62 + n2 * 0.38;
+}
+
+float water_highlight(vec2 xz) {
+	float a = cells(xz * 0.46 + vec2(TIME * 0.065, TIME * 0.028));
+	float b = cells(xz * 0.30 + vec2(-TIME * 0.04, TIME * 0.05) + vec2(5.0, 2.0));
+	float blob = smoothstep(0.62, 0.16, a);
+	float blob2 = smoothstep(0.55, 0.14, b);
+	return clamp(blob * 0.72 + blob2 * 0.48, 0.0, 1.0);
+}
+
+float flat_channel(float target) {
+	float bias = 2.0;
+	float curve_a = 0.22 * bias * bias;
+	float curve_b = 0.30 * bias;
+	float curve_c = 0.10;
+	float curve_d = 0.20;
+	float curve_e = 0.01;
+	float curve_f = 0.30;
+	float white = max(tone_white, 1.0);
+	float white_tm = ((white * (curve_a * white + curve_c * curve_b) + curve_d * curve_e) / (white * (curve_a * white + curve_b) + curve_d * curve_f)) - curve_e / curve_f;
+	float y = pow((target + 0.055) / 1.055, 1.0 / 0.416666667);
+	float u = y * white_tm + curve_e / curve_f;
+	float a = curve_a * (u - 1.0);
+	float b = curve_b * (u - curve_c);
+	float c = curve_d * (u * curve_f - curve_e);
+	float disc = sqrt(max(b * b - 4.0 * a * c, 0.0));
+	float x = (-b - disc) / (2.0 * a);
+	float linear_albedo = x / max(tone_exposure, 0.001);
+	float s = pow(max(linear_albedo, 0.0), 0.416666667);
+	for (int i = 0; i < 4; i++) {
+		float f = s * (s * (s * 0.305306011 + 0.682171111) + 0.012522878) - linear_albedo;
+		float df = (3.0 * 0.305306011 * s + 2.0 * 0.682171111) * s + 0.012522878;
+		s -= f / df;
+	}
+	return max(s, 0.0);
+}
+
+void vertex() {
+	vec3 world = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	world_xz = world.xz;
+	wave_h = water_roll(world.xz);
+	VERTEX.y += (wave_h - 0.5) * 0.08;
+}
+
+void fragment() {
+	float hi = water_highlight(world_xz);
+	float slope_x = dFdx(wave_h);
+	float slope_z = dFdy(wave_h);
+	vec3 n = normalize(vec3(-slope_x * 5.0, 1.0, -slope_z * 5.0));
+	float spec = pow(clamp(dot(n, normalize(vec3(-0.32, 0.88, 0.28))), 0.0, 1.0), 16.0);
+	vec3 pale = target_srgb;
+	vec3 crest = vec3(0.90, 0.96, 0.98);
+	vec3 trough = vec3(0.60, 0.80, 0.88);
+	float lift = clamp(hi * 0.40 + spec * 0.20, 0.0, 0.36);
+	float dip = clamp((0.40 - hi) * 0.18, 0.0, 0.12);
+	vec3 color = mix(pale, crest, lift);
+	color = mix(color, trough, dip);
+	color = clamp(color, vec3(0.05), vec3(0.97));
+	ALBEDO = vec3(flat_channel(color.r), flat_channel(color.g), flat_channel(color.b));
+	ALPHA = mix(0.30, 0.50, hi);
+}
+"""
 
 
 func _flat_shader_code() -> String:
