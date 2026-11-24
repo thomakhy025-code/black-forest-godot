@@ -315,12 +315,12 @@ func _build_map() -> void:
 func _designed_ground() -> void:
 	var grass := _mat("grass", Color(0.26, 0.42, 0.17), 1.0)
 	_plane(Vector2(Balance.MAP_W, Balance.MAP_H), Vector3(Balance.MAP_W * 0.5, 0.0, Balance.MAP_H * 0.5), grass)
-	_sheet_code(1, "meadow", Color(0.30, 0.46, 0.2), 1.0, 0.012)
+	_sheet_code(1, "meadow", Color(0.72, 0.88, 0.58), 1.0, 0.012)
 	_sheet_code(2, "sand", Color(0.62, 0.52, 0.34), 1.0, 0.008)
 	_sheet_code(7, "yard", Color(0.78, 0.68, 0.46), 0.9, 0.016)
 	_sheet_code(8, "isle", Color(0.45, 0.62, 0.3), 1.0, 0.05)
 	_sheet_code(4, "road", Color(0.62, 0.48, 0.28), 0.95, 0.03)
-	_sheet_code(5, "water", Color(0.16, 0.46, 0.78, 0.92), 0.08, -0.16)
+	_sheet_code(5, "water", Color(0.62, 0.86, 0.96, 1.0), 0.08, -0.16)
 	_sheet_code(6, "plank", Color(0.56, 0.38, 0.2), 0.82, 0.1)
 	var rock := _mat("mountain", Color(0.45, 0.43, 0.39), 0.95)
 	for rect_item in MapDesign.rects(3):
