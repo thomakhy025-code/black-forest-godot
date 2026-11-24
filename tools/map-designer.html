@@ -1,0 +1,823 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Black Forest map designer</title>
+<style>
+  :root {
+    --ink: #1c1914;
+    --muted: #5c564c;
+    --paper: #f4efe4;
+    --panel: #fffaf2;
+    --line: #d9d0c0;
+    --accent: #2f6a34;
+    --accent-ink: #f6f3ea;
+    --danger: #8d2e2e;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    font: 14px/1.4 "Segoe UI", sans-serif;
+    color: var(--ink);
+    background: var(--paper);
+    display: flex;
+    flex-direction: column;
+    min-height: 100%;
+  }
+  header {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    align-items: flex-end;
+    padding: 14px 18px 12px;
+    border-bottom: 1px solid var(--line);
+    background: var(--panel);
+  }
+  h1 { font-size: 18px; margin: 0 0 2px; font-weight: 650; }
+  header p { margin: 0; color: var(--muted); max-width: 640px; }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+  button, .file-btn {
+    border: 1px solid var(--line);
+    background: #fff;
+    color: var(--ink);
+    border-radius: 6px;
+    padding: 7px 10px;
+    font: inherit;
+    cursor: pointer;
+  }
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  button.danger { color: var(--danger); }
+  button:disabled { opacity: 0.45; cursor: default; }
+  .app { flex: 1; display: grid; grid-template-columns: 232px 1fr 250px; min-height: 0; }
+  aside { background: var(--panel); overflow: auto; padding: 12px; }
+  aside.tools { border-right: 1px solid var(--line); }
+  aside.info { border-left: 1px solid var(--line); }
+  h2 { font-size: 12px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); margin: 14px 0 8px; }
+  h2:first-child { margin-top: 0; }
+  .swatches, .stamps { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .swatch, .stamp {
+    display: flex; align-items: center; gap: 6px;
+    border: 1px solid var(--line); background: #fff; border-radius: 6px;
+    padding: 6px; cursor: pointer; text-align: left; font: inherit; color: var(--ink);
+  }
+  .swatch.on, .stamp.on, .mode.on { border-color: var(--accent); outline: 2px solid var(--accent); }
+  .chip { width: 14px; height: 14px; border-radius: 3px; flex: 0 0 auto; border: 1px solid rgba(0,0,0,0.15); }
+  .modes { display: flex; flex-wrap: wrap; gap: 6px; }
+  .mode { padding: 6px 8px; }
+  label.row { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 6px 0; color: var(--muted); }
+  select, input[type="number"] { font: inherit; border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; background: #fff; color: var(--ink); width: 92px; }
+  main { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+  #view { flex: 1; overflow: auto; background:
+    linear-gradient(#e7e1d4 1px, transparent 1px),
+    linear-gradient(90deg, #e7e1d4 1px, transparent 1px);
+    background-size: 24px 24px;
+    background-color: #e9e2d4;
+    padding: 18px;
+  }
+  canvas { display: block; background: #3d6a2c; cursor: crosshair; box-shadow: 0 0 0 1px #c9c0ae; }
+  #status {
+    border-top: 1px solid var(--line);
+    padding: 6px 12px;
+    color: var(--muted);
+    background: var(--panel);
+    display: flex; justify-content: space-between; gap: 12px;
+  }
+  .counts { margin: 0; padding: 0; list-style: none; }
+  .counts li { display: flex; justify-content: space-between; padding: 3px 0; border-bottom: 1px solid var(--line); }
+  .note { color: var(--muted); font-size: 13px; }
+  .file-btn input { display: none; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Black Forest map designer</h1>
+    <p>The field is 88 meters wide and 50 meters tall. North is the top. Crimson is west, Azure is east. Paint the land, then place trees and the other pieces. Save the file when you want this design in the game.</p>
+  </div>
+  <div class="actions">
+    <button id="undo" type="button">Undo</button>
+    <button id="redo" type="button">Redo</button>
+    <button id="reset" class="danger" type="button">Start from the game map</button>
+    <label class="file-btn">Open design<input id="open" type="file" accept="application/json,.json"></label>
+    <button id="save" class="primary" type="button">Save design</button>
+  </div>
+</header>
+<div class="app">
+  <aside class="tools">
+    <h2>Hand</h2>
+    <div class="modes" id="modes"></div>
+    <h2>Ground</h2>
+    <div class="swatches" id="grounds"></div>
+    <label class="row">Brush <select id="brush"><option value="1">1 m</option><option value="3" selected>3 m</option><option value="5">5 m</option><option value="9">9 m</option></select></label>
+    <h2>Place</h2>
+    <div class="stamps" id="stamps"></div>
+    <h2>Side</h2>
+    <label class="row">Team <select id="team"><option value="0">Crimson</option><option value="1">Azure</option><option value="-1">Neutral</option></select></label>
+    <label class="row">Weapon <select id="weapon"><option value="sword">Sword</option><option value="wand">Wand</option></select></label>
+    <label class="row"><span>Grid</span><input id="grid" type="checkbox" checked></label>
+  </aside>
+  <main>
+    <div id="view"><canvas id="map"></canvas></div>
+    <div id="status"><span id="coord">0.0 m, 0.0 m</span><span id="hint">Paint or place. Scroll to zoom. Drag walls and doors.</span></div>
+  </main>
+  <aside class="info">
+    <h2>On this map</h2>
+    <ul class="counts" id="counts"></ul>
+    <h2>Selected</h2>
+    <div id="inspect" class="note">Nothing selected.</div>
+    <h2>How to use it</h2>
+    <p class="note">Water, sand, meadow, road, and mountain are the ground. Trees, plants, and animals are the forest you can gather. Walls, doors, forges, and diamonds are the pieces the match already knows.</p>
+    <p class="note">Save design downloads a file named black-forest-map.json. Bring that file back when you want the design built into the game. Your work also stays in this browser.</p>
+  </aside>
+</div>
+<script>
+const W = 88;
+const H = 50;
+const GROUND = [
+  { id: 0, name: "Grass", color: "#3d6a2c" },
+  { id: 1, name: "Meadow", color: "#5c8a38" },
+  { id: 2, name: "Sand", color: "#c2a36a" },
+  { id: 3, name: "Mountain", color: "#6e6a62" },
+  { id: 4, name: "Road", color: "#8d6b3e" },
+  { id: 5, name: "Water", color: "#1d6ea3" },
+  { id: 6, name: "Bridge", color: "#d7b07a" },
+  { id: 7, name: "Yard", color: "#e7d7a8" },
+  { id: 8, name: "Island", color: "#7d9a4e" }
+];
+const STAMPS = [
+  { kind: "tree", name: "Tree", color: "#245c22", r: 0.55 },
+  { kind: "plant", name: "Plant", color: "#8fbf45", r: 0.32 },
+  { kind: "animal", name: "Animal", color: "#8a5a32", r: 0.4 },
+  { kind: "rock", name: "Rock", color: "#5c616c", r: 1.7 },
+  { kind: "stone", name: "Stone", color: "#8d929a", r: 0.45 },
+  { kind: "keep", name: "Keep", color: "#f0e6cc", r: 1 },
+  { kind: "tower", name: "Tower", color: "#efe4c4", r: 1.2 },
+  { kind: "outpost", name: "Outpost", color: "#e6b84a", r: 1.05 },
+  { kind: "forge", name: "Forge", color: "#c56a28", r: 0.55 },
+  { kind: "diamond", name: "Diamond", color: "#f7f1dc", r: 0.7 },
+  { kind: "vault", name: "Vault", color: "#e0b04a", r: 1.75 },
+  { kind: "sewer", name: "Sewer", color: "#6b4a28", r: 0.65 },
+  { kind: "catapult", name: "Catapult", color: "#8a6238", r: 0.5 },
+  { kind: "spring", name: "Spring", color: "#3dae62", r: 0.35 },
+  { kind: "ladder", name: "Ladder", color: "#c4a06a", r: 0.3 },
+  { kind: "cake", name: "Cake", color: "#e86b8a", r: 0.35 },
+  { kind: "wall", name: "Wall", color: "#d9d0c0", r: 0 },
+  { kind: "door", name: "Door", color: "#c43848", r: 0 }
+];
+const POINT = {};
+STAMPS.forEach((s) => { POINT[s.kind] = s; });
+
+const canvas = document.getElementById("map");
+const ctx = canvas.getContext("2d");
+const view = document.getElementById("view");
+
+let scale = 12;
+let terrain = new Uint8Array(W * H);
+let objects = [];
+let nextId = 1;
+let mode = "paint";
+let ground = 5;
+let stamp = "tree";
+let selected = null;
+let undoStack = [];
+let redoStack = [];
+let painting = false;
+let erasing = false;
+let dragged = false;
+let dragStart = null;
+let dragOrigin = null;
+let space = false;
+
+function stampOf(kind) { return POINT[kind]; }
+
+function cell(x, y) {
+  const ix = Math.floor(x);
+  const iy = Math.floor(y);
+  if (ix < 0 || iy < 0 || ix >= W || iy >= H) return -1;
+  return iy * W + ix;
+}
+
+function fillRect(code, x0, y0, x1, y1) {
+  const a = Math.max(0, Math.floor(Math.min(x0, x1)));
+  const b = Math.max(0, Math.floor(Math.min(y0, y1)));
+  const c = Math.min(W - 1, Math.floor(Math.max(x0, x1)));
+  const d = Math.min(H - 1, Math.floor(Math.max(y0, y1)));
+  for (let y = b; y <= d; y++) {
+    for (let x = a; x <= c; x++) terrain[y * W + x] = code;
+  }
+}
+
+function distPointSeg(px, py, ax, ay, bx, by) {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const len = dx * dx + dy * dy;
+  let t = 0;
+  if (len > 0) t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / len));
+  const qx = ax + dx * t;
+  const qy = ay + dy * t;
+  return Math.hypot(px - qx, py - qy);
+}
+
+function inside(poly, x, y) {
+  let hit = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const xi = poly[i][0], yi = poly[i][1];
+    const xj = poly[j][0], yj = poly[j][1];
+    const cross = ((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / ((yj - yi) || 1e-9) + xi);
+    if (cross) hit = !hit;
+  }
+  return hit;
+}
+
+function paintNear(points, radius, code) {
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const px = x + 0.5;
+      const py = y + 0.5;
+      for (let i = 0; i < points.length - 1; i++) {
+        if (distPointSeg(px, py, points[i][0], points[i][1], points[i + 1][0], points[i + 1][1]) <= radius) {
+          terrain[y * W + x] = code;
+          break;
+        }
+      }
+    }
+  }
+}
+
+function pondPoly() {
+  const top = 20.6, topNeck = 26.6, botNeck = 73.6, bot = 82.2, neck = 2.55, wide = 18.8, cx = 88;
+  const ys = [];
+  for (let y = top; y < bot - 0.01; y += 1.05) ys.push(y);
+  ys.push(bot);
+  const left = [];
+  const right = [];
+  ys.forEach((sample) => {
+    let s = 0;
+    if (sample > topNeck && sample < botNeck) {
+      const t = (sample - topNeck) / (botNeck - topNeck);
+      s = Math.pow(Math.sin(Math.max(0, Math.min(1, t)) * Math.PI), 0.42);
+    }
+    const half = neck + (wide - neck) * s;
+    const bias = Math.sin((sample - 38) * 0.22) * 1.15 * s;
+    left.push([(cx - half + bias) * 0.5, sample * 0.5]);
+    right.push([(cx + half + bias) * 0.5, sample * 0.5]);
+  });
+  right.reverse();
+  return left.concat(right);
+}
+
+function seedObjects() {
+  const list = [];
+  function add(kind, x, y, extra) {
+    list.push(Object.assign({ id: nextId++, kind, x, y }, extra || {}));
+  }
+  const grove = [
+    [28, 12], [46, 11], [62, 13], [108, 12], [126, 11], [148, 13], [164, 16],
+    [70, 16.2], [70, 27.6], [106, 16.2], [106, 27.6],
+    [38, 36], [138, 36], [38, 70], [138, 70],
+    [72, 80.2], [72, 91.4], [104, 80.2],
+    [30, 96], [102, 96], [150, 96], [172, 40], [172, 70]
+  ];
+  const west = { x: 4.2, y: 14, w: 17, h: 23.5 };
+  const east = { x: 66.8, y: 14, w: 17.2, h: 23.5 };
+  const trees = [];
+  grove.forEach((spot) => {
+    const x = spot[0] * 0.5;
+    const y = spot[1] * 0.5;
+    const inYard = (x >= west.x && x <= west.x + west.w && y >= west.y && y <= west.y + west.h)
+      || (x >= east.x && x <= east.x + east.w && y >= east.y && y <= east.y + east.h);
+    const mountain = (y <= 5.2 || y >= 45.2) && !(x > 39.2 && x < 48.8) && [6, 16, 26, 34, 54, 64, 74, 84].some((xf) => Math.abs(x - xf) <= 5.2);
+    if (!inYard && !mountain) {
+      trees.push([x, y]);
+      add("tree", x, y);
+    }
+  });
+  [[18, 8], [70, 8], [18, 42], [70, 42], [34, 8], [54, 8], [34, 42], [54, 42]].forEach((spot) => {
+    if (!trees.some((t) => Math.hypot(t[0] - spot[0], t[1] - spot[1]) < 2.2)) add("tree", spot[0], spot[1]);
+  });
+  [[20, 10], [68, 10], [20, 40], [68, 40], [36, 12], [52, 38]].forEach((p) => add("plant", p[0], p[1]));
+  [[16, 10], [72, 10], [16, 40], [72, 40], [32, 36], [56, 14]].forEach((p) => add("animal", p[0], p[1]));
+  add("rock", 42.1, 4.1, { r: 1.73 });
+  add("rock", 45.9, 4.1, { r: 1.73 });
+  [[23.4, 21.5], [27.2, 27.5], [64.6, 21.5], [60.8, 27.5]].forEach((p) => add("stone", p[0], p[1]));
+  [[40.3, 11.7], [47.7, 11.7], [40.3, 38.9], [47.7, 38.9]].forEach((p) => add("keep", p[0], p[1]));
+  add("tower", 29, 46, { name: "West Tower" });
+  add("tower", 59, 46, { name: "East Tower" });
+  add("outpost", 44, 7.5);
+  add("forge", 7.5, 17.2, { team: 0, weapon: "sword" });
+  add("forge", 16.5, 17.2, { team: 0, weapon: "wand" });
+  add("forge", 71.5, 17.2, { team: 1, weapon: "sword" });
+  add("forge", 80.5, 17.2, { team: 1, weapon: "wand" });
+  add("diamond", 9, 20, { team: 0 });
+  add("diamond", 79, 20, { team: 1 });
+  add("vault", 10, 33, { team: 0 });
+  add("vault", 78, 33, { team: 1 });
+  add("sewer", 14, 20, { team: 0 });
+  add("sewer", 74, 20, { team: 1 });
+  add("catapult", 15, 28, { team: 0 });
+  add("catapult", 73, 28, { team: 1 });
+  add("spring", 8, 11);
+  add("spring", 80, 11);
+  add("ladder", 11, 40);
+  add("ladder", 77, 40);
+  add("cake", 44.1, 25.1);
+  add("cake", 48.4, 21.7);
+  const walls = [
+    [3, 13, 18, 1.5], [3, 36.5, 18, 1.5], [3, 13, 1.5, 25], [19.5, 13, 1.5, 9], [19.5, 29, 1.5, 9],
+    [67, 13, 18, 1.5], [67, 36.5, 18, 1.5], [83.5, 13, 1.5, 25], [67, 13, 1.5, 9], [67, 29, 1.5, 9]
+  ];
+  walls.forEach((r) => add("wall", r[0], r[1], { w: r[2], h: r[3], team: -1 }));
+  [[19.5, 22], [19.5, 25.5]].forEach((p) => add("door", p[0], p[1], { w: 1.5, h: 3.5, team: 0 }));
+  [[67, 22], [67, 25.5]].forEach((p) => add("door", p[0], p[1], { w: 1.5, h: 3.5, team: 1 }));
+  return list;
+}
+
+function seedMap() {
+  terrain = new Uint8Array(W * H);
+  fillRect(1, 18, 7, 69.9, 42.9);
+  fillRect(2, 0, 0, W - 0.01, 4.19);
+  fillRect(2, 0, 45.5, W - 0.01, H - 0.01);
+  fillRect(4, 20, 22, 67.9, 28.9);
+  [6, 16, 26, 34, 54, 64, 74, 84].forEach((xf) => {
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        if (x + 0.5 > 39.2 && x + 0.5 < 48.8) continue;
+        if (Math.abs(x + 0.5 - xf) > 5.2) continue;
+        const yy = y + 0.5;
+        if ((yy >= 1.4 && yy <= 5.2) || (yy >= 45.2 && yy <= 48.8)) terrain[y * W + x] = 3;
+      }
+    }
+  });
+  fillRect(7, 4.5, 14.5, 19.4, 36.4);
+  fillRect(7, 68.5, 14.5, 83.4, 36.4);
+  const westRiver = [[24.7, 19], [26.3, 21.5], [24.1, 24], [26.2, 26.5], [24.2, 29], [25.9, 32]];
+  const eastRiver = westRiver.map((p) => [88 - p[0], p[1]]);
+  paintNear(westRiver, 0.9, 5);
+  paintNear(eastRiver, 0.9, 5);
+  const pond = pondPoly();
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      if (inside(pond, x + 0.5, y + 0.5)) terrain[y * W + x] = 5;
+    }
+  }
+  const isle = [[42.1, 23.7], [43.3, 22.75], [45.2, 23.1], [46.7, 24.25], [47.05, 25.9], [46, 27.3], [44.2, 27.75], [42.5, 27.1], [41.6, 25.7], [41.7, 24.3]];
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const px = x + 0.5, py = y + 0.5;
+      if (inside(isle, px, py) || Math.hypot(px - 48.4, py - 21.7) <= 0.8) terrain[y * W + x] = 8;
+    }
+  }
+  fillRect(6, 42.1, 10.9, 45.8, 12.4);
+  fillRect(6, 42.1, 38.1, 45.8, 39.6);
+  nextId = 1;
+  objects = seedObjects();
+  selected = null;
+}
+
+function pack() {
+  let ground = "";
+  for (let i = 0; i < terrain.length; i++) ground += String(terrain[i]);
+  return {
+    name: "black-forest-map",
+    version: 1,
+    width: W,
+    height: H,
+    unit: "meter",
+    north: "y 0",
+    south: "y 50",
+    west: "x 0, Crimson",
+    east: "x 88, Azure",
+    groundCodes: { 0: "grass", 1: "meadow", 2: "sand", 3: "mountain", 4: "road", 5: "water", 6: "bridge", 7: "yard", 8: "island" },
+    ground,
+    objects: objects.map((o) => {
+      const row = { kind: o.kind, x: round(o.x), y: round(o.y) };
+      if (o.w) row.w = round(o.w);
+      if (o.h) row.h = round(o.h);
+      if (o.r) row.r = round(o.r);
+      if (o.team !== undefined) row.team = o.team;
+      if (o.weapon) row.weapon = o.weapon;
+      if (o.name) row.name = o.name;
+      return row;
+    })
+  };
+}
+
+function round(n) { return Math.round(n * 100) / 100; }
+
+function applyPack(data) {
+  if (!data || data.width !== W || data.height !== H || typeof data.ground !== "string" || data.ground.length !== W * H) {
+    throw new Error("This file is not an 88 by 50 Black Forest map.");
+  }
+  const next = new Uint8Array(W * H);
+  for (let i = 0; i < data.ground.length; i++) {
+    const code = data.ground.charCodeAt(i) - 48;
+    next[i] = code >= 0 && code <= 8 ? code : 0;
+  }
+  terrain = next;
+  nextId = 1;
+  objects = (data.objects || []).map((o) => Object.assign({ id: nextId++ }, o));
+  selected = null;
+}
+
+function worldFromEvent(ev) {
+  const rect = canvas.getBoundingClientRect();
+  return {
+    x: (ev.clientX - rect.left) / rect.width * W,
+    y: (ev.clientY - rect.top) / rect.height * H
+  };
+}
+
+function resize() {
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = Math.round(W * scale * dpr);
+  canvas.height = Math.round(H * scale * dpr);
+  canvas.style.width = (W * scale) + "px";
+  canvas.style.height = (H * scale) + "px";
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  draw();
+}
+
+function draw() {
+  ctx.clearRect(0, 0, W * scale, H * scale);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      ctx.fillStyle = GROUND[terrain[y * W + x]].color;
+      ctx.fillRect(x * scale, y * scale, scale + 0.5, scale + 0.5);
+    }
+  }
+  if (document.getElementById("grid").checked && scale >= 8) {
+    ctx.strokeStyle = "rgba(20,16,10,0.13)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let x = 0; x <= W; x += 2) {
+      ctx.moveTo(x * scale + 0.5, 0);
+      ctx.lineTo(x * scale + 0.5, H * scale);
+    }
+    for (let y = 0; y <= H; y += 2) {
+      ctx.moveTo(0, y * scale + 0.5);
+      ctx.lineTo(W * scale, y * scale + 0.5);
+    }
+    ctx.stroke();
+  }
+  ctx.strokeStyle = "rgba(255,255,255,0.35)";
+  ctx.beginPath();
+  ctx.moveTo(44 * scale, 0);
+  ctx.lineTo(44 * scale, H * scale);
+  ctx.stroke();
+  objects.forEach(drawObject);
+  if (dragStart && (mode === "wall" || mode === "door" || mode === "fill") && dragOrigin) {
+    const x = Math.min(dragStart.x, dragOrigin.x);
+    const y = Math.min(dragStart.y, dragOrigin.y);
+    const w = Math.abs(dragOrigin.x - dragStart.x);
+    const h = Math.abs(dragOrigin.y - dragStart.y);
+    ctx.strokeStyle = mode === "door" ? "#c43848" : "#1c1914";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x * scale, y * scale, w * scale, h * scale);
+  }
+}
+
+function drawObject(o) {
+  const spec = stampOf(o.kind) || { color: "#fff", r: 0.4 };
+  const color = o.kind === "door" ? (o.team === 1 ? "#3868c4" : "#c43848") : (o.kind === "forge" && o.weapon === "wand" ? "#3d78b4" : spec.color);
+  ctx.fillStyle = color;
+  ctx.strokeStyle = selected === o.id ? "#1c1914" : "rgba(20,16,10,0.35)";
+  ctx.lineWidth = selected === o.id ? 2 : 1;
+  if (o.kind === "wall" || o.kind === "door") {
+    ctx.fillRect(o.x * scale, o.y * scale, (o.w || 1) * scale, (o.h || 1) * scale);
+    ctx.strokeRect(o.x * scale, o.y * scale, (o.w || 1) * scale, (o.h || 1) * scale);
+    return;
+  }
+  const r = (o.r || spec.r || 0.4) * scale;
+  ctx.beginPath();
+  ctx.arc(o.x * scale, o.y * scale, Math.max(3, r), 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  if (scale >= 14 && (o.kind === "diamond" || o.kind === "forge" || o.kind === "keep")) {
+    ctx.fillStyle = "#1c1914";
+    ctx.font = "11px Segoe UI";
+    ctx.fillText(o.kind, o.x * scale + 4, o.y * scale - 4);
+  }
+}
+
+function hitObject(p) {
+  let best = null;
+  let bestD = 1.1;
+  for (let i = objects.length - 1; i >= 0; i--) {
+    const o = objects[i];
+    if (o.kind === "wall" || o.kind === "door") {
+      if (p.x >= o.x && p.x <= o.x + (o.w || 1) && p.y >= o.y && p.y <= o.y + (o.h || 1)) return o;
+      continue;
+    }
+    const d = Math.hypot(p.x - o.x, p.y - o.y);
+    const r = (o.r || (stampOf(o.kind) || {}).r || 0.4) + 0.35;
+    if (d <= r && d < bestD) {
+      best = o;
+      bestD = d;
+    }
+  }
+  return best;
+}
+
+function paintAt(p) {
+  const radius = Number(document.getElementById("brush").value);
+  const code = (mode === "erase" || erasing) ? 0 : ground;
+  const r = (radius - 1) / 2;
+  for (let y = Math.floor(p.y - r); y <= Math.floor(p.y + r); y++) {
+    for (let x = Math.floor(p.x - r); x <= Math.floor(p.x + r); x++) {
+      const i = cell(x, y);
+      if (i >= 0) terrain[i] = code;
+    }
+  }
+}
+
+function remember() {
+  undoStack.push({ t: terrain.slice(), o: JSON.parse(JSON.stringify(objects)), n: nextId, s: selected });
+  if (undoStack.length > 60) undoStack.shift();
+  redoStack = [];
+  document.getElementById("undo").disabled = false;
+  document.getElementById("redo").disabled = true;
+}
+
+function restore(entry) {
+  terrain = entry.t;
+  objects = entry.o;
+  nextId = entry.n;
+  selected = entry.s;
+  draw();
+  refreshInfo();
+  persist();
+}
+
+function undo() {
+  if (!undoStack.length) return;
+  redoStack.push({ t: terrain.slice(), o: JSON.parse(JSON.stringify(objects)), n: nextId, s: selected });
+  restore(undoStack.pop());
+  document.getElementById("redo").disabled = false;
+  document.getElementById("undo").disabled = undoStack.length === 0;
+}
+
+function redo() {
+  if (!redoStack.length) return;
+  undoStack.push({ t: terrain.slice(), o: JSON.parse(JSON.stringify(objects)), n: nextId, s: selected });
+  restore(redoStack.pop());
+  document.getElementById("undo").disabled = false;
+  document.getElementById("redo").disabled = redoStack.length === 0;
+}
+
+function teamValue() { return Number(document.getElementById("team").value); }
+
+function placePoint(p) {
+  const spec = stampOf(stamp);
+  if (!spec || spec.kind === "wall" || spec.kind === "door") return;
+  const row = { id: nextId++, kind: stamp, x: p.x, y: p.y };
+  if (spec.r) row.r = spec.r;
+  if (stamp === "forge") {
+    row.team = teamValue() < 0 ? (p.x < 44 ? 0 : 1) : teamValue();
+    row.weapon = document.getElementById("weapon").value;
+  } else if (stamp === "diamond" || stamp === "vault" || stamp === "sewer" || stamp === "catapult") {
+    row.team = teamValue() < 0 ? (p.x < 44 ? 0 : 1) : teamValue();
+  }
+  objects.push(row);
+  selected = row.id;
+}
+
+function placeRect(a, b, kind) {
+  let x = Math.min(a.x, b.x);
+  let y = Math.min(a.y, b.y);
+  let w = Math.max(0.4, Math.abs(a.x - b.x));
+  let h = Math.max(0.4, Math.abs(a.y - b.y));
+  const team = kind === "wall" ? -1 : (teamValue() < 0 ? (x < 44 ? 0 : 1) : teamValue());
+  objects.push({ id: nextId++, kind, x, y, w, h, team });
+  selected = objects[objects.length - 1].id;
+}
+
+function fillDrag(a, b) {
+  const code = mode === "erase" ? 0 : ground;
+  fillRect(code, a.x, a.y, b.x, b.y);
+}
+
+function onDown(ev) {
+  if (ev.button === 1 || space) return;
+  const p = worldFromEvent(ev);
+  if (ev.button === 2) {
+    remember();
+    erasing = true;
+    painting = true;
+    paintAt(p);
+    draw();
+    canvas.setPointerCapture(ev.pointerId);
+    return;
+  }
+  if (mode === "select") {
+    const hit = hitObject(p);
+    selected = hit ? hit.id : null;
+    if (hit) {
+      remember();
+      dragged = true;
+      dragStart = p;
+      dragOrigin = { x: hit.x, y: hit.y };
+    }
+    draw();
+    refreshInfo();
+    return;
+  }
+  remember();
+  dragStart = p;
+  canvas.setPointerCapture(ev.pointerId);
+  dragOrigin = p;
+  if (mode === "paint" || mode === "erase") {
+    painting = true;
+    paintAt(p);
+    draw();
+  } else if (mode === "place") {
+    placePoint(p);
+    draw();
+    refreshInfo();
+    persist();
+  }
+}
+
+function onMove(ev) {
+  const p = worldFromEvent(ev);
+  document.getElementById("coord").textContent = p.x.toFixed(1) + " m east, " + p.y.toFixed(1) + " m south";
+  if (painting) {
+    paintAt(p);
+    draw();
+    return;
+  }
+  if (dragged && selected != null) {
+    const o = objects.find((item) => item.id === selected);
+    if (!o) return;
+    o.x = dragOrigin.x + (p.x - dragStart.x);
+    o.y = dragOrigin.y + (p.y - dragStart.y);
+    draw();
+    refreshInfo();
+    return;
+  }
+  if (dragStart && (mode === "wall" || mode === "door" || mode === "fill")) {
+    dragOrigin = p;
+    draw();
+  }
+}
+
+function onUp(ev) {
+  const p = worldFromEvent(ev);
+  if (dragStart && mode === "wall") placeRect(dragStart, p, "wall");
+  if (dragStart && mode === "door") placeRect(dragStart, p, "door");
+  if (dragStart && mode === "fill") fillDrag(dragStart, p);
+  const changed = painting || dragged || mode === "wall" || mode === "door" || mode === "fill";
+  painting = false;
+  erasing = false;
+  dragged = false;
+  dragStart = null;
+  dragOrigin = null;
+  if (changed) {
+    draw();
+    refreshInfo();
+    persist();
+  }
+}
+
+function refreshInfo() {
+  const tally = {};
+  GROUND.forEach((g) => { tally[g.name] = 0; });
+  for (let i = 0; i < terrain.length; i++) tally[GROUND[terrain[i]].name]++;
+  const kinds = {};
+  objects.forEach((o) => { kinds[o.kind] = (kinds[o.kind] || 0) + 1; });
+  const rows = [
+    ["Water", tally.Water + " m²"],
+    ["Trees", kinds.tree || 0],
+    ["Plants", kinds.plant || 0],
+    ["Animals", kinds.animal || 0],
+    ["Mountains", tally.Mountain + " m²"],
+    ["Roads", tally.Road + " m²"],
+    ["Walls", kinds.wall || 0],
+    ["Doors", kinds.door || 0]
+  ];
+  document.getElementById("counts").innerHTML = rows.map((r) => "<li><span>" + r[0] + "</span><span>" + r[1] + "</span></li>").join("");
+  const o = objects.find((item) => item.id === selected);
+  const box = document.getElementById("inspect");
+  if (!o) {
+    box.innerHTML = "Nothing selected. Choose Select, then click a piece to move it.";
+    return;
+  }
+  const teamName = o.team === 0 ? "Crimson" : o.team === 1 ? "Azure" : "Neutral";
+  box.innerHTML = "<strong>" + o.kind + "</strong><div>" + round(o.x) + " m, " + round(o.y) + " m</div>"
+    + (o.team !== undefined ? "<div>" + teamName + "</div>" : "")
+    + (o.weapon ? "<div>" + o.weapon + "</div>" : "")
+    + "<div style='margin-top:8px'><button id='del' class='danger' type='button'>Remove</button></div>";
+  document.getElementById("del").onclick = () => {
+    remember();
+    objects = objects.filter((item) => item.id !== o.id);
+    selected = null;
+    draw();
+    refreshInfo();
+    persist();
+  };
+}
+
+function persist() {
+  try { localStorage.setItem("bf-map-design-v1", JSON.stringify(pack())); } catch (err) {}
+}
+
+function download() {
+  const blob = new Blob([JSON.stringify(pack(), null, 2)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "black-forest-map.json";
+  a.click();
+  URL.revokeObjectURL(a.href);
+  document.getElementById("hint").textContent = "Saved black-forest-map.json. Bring that file back to put the design in the game.";
+}
+
+function buildPalette() {
+  const modes = [
+    ["paint", "Paint"], ["fill", "Fill"], ["erase", "Erase"],
+    ["place", "Stamp"], ["wall", "Wall"], ["door", "Door"], ["select", "Select"]
+  ];
+  document.getElementById("modes").innerHTML = modes.map((m) => "<button class='mode" + (m[0] === mode ? " on" : "") + "' data-mode='" + m[0] + "' type='button'>" + m[1] + "</button>").join("");
+  document.getElementById("grounds").innerHTML = GROUND.map((g) => "<button class='swatch" + (g.id === ground ? " on" : "") + "' data-ground='" + g.id + "' type='button'><span class='chip' style='background:" + g.color + "'></span>" + g.name + "</button>").join("");
+  document.getElementById("stamps").innerHTML = STAMPS.filter((s) => s.kind !== "wall" && s.kind !== "door").map((s) => "<button class='stamp" + (s.kind === stamp ? " on" : "") + "' data-stamp='" + s.kind + "' type='button'><span class='chip' style='background:" + s.color + "'></span>" + s.name + "</button>").join("");
+  document.querySelectorAll(".mode").forEach((btn) => btn.onclick = () => { mode = btn.dataset.mode; buildPalette(); });
+  document.querySelectorAll(".swatch").forEach((btn) => btn.onclick = () => { ground = Number(btn.dataset.ground); if (mode !== "fill") mode = "paint"; buildPalette(); });
+  document.querySelectorAll(".stamp").forEach((btn) => btn.onclick = () => { stamp = btn.dataset.stamp; mode = "place"; buildPalette(); });
+}
+
+document.getElementById("undo").onclick = undo;
+document.getElementById("redo").onclick = redo;
+document.getElementById("reset").onclick = () => {
+  if (!confirm("Replace this design with the map that is in the game now?")) return;
+  remember();
+  seedMap();
+  draw();
+  refreshInfo();
+  persist();
+};
+document.getElementById("save").onclick = download;
+document.getElementById("open").onchange = (ev) => {
+  const file = ev.target.files && ev.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      remember();
+      applyPack(JSON.parse(String(reader.result)));
+      draw();
+      refreshInfo();
+      persist();
+    } catch (err) {
+      alert(err.message || "Could not open that file.");
+    }
+  };
+  reader.readAsText(file);
+};
+document.getElementById("grid").onchange = draw;
+canvas.addEventListener("pointerdown", onDown);
+canvas.addEventListener("pointermove", onMove);
+window.addEventListener("pointerup", onUp);
+canvas.addEventListener("contextmenu", (ev) => ev.preventDefault());
+view.addEventListener("wheel", (ev) => {
+  ev.preventDefault();
+  const next = Math.max(6, Math.min(28, scale + (ev.deltaY < 0 ? 2 : -2)));
+  if (next === scale) return;
+  scale = next;
+  resize();
+}, { passive: false });
+window.addEventListener("keydown", (ev) => {
+  if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "z") {
+    ev.preventDefault();
+    if (ev.shiftKey) redo(); else undo();
+  } else if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "s") {
+    ev.preventDefault();
+    download();
+  } else if (ev.key === "Delete" || ev.key === "Backspace") {
+    const o = objects.find((item) => item.id === selected);
+    if (!o) return;
+    remember();
+    objects = objects.filter((item) => item.id !== o.id);
+    selected = null;
+    draw();
+    refreshInfo();
+    persist();
+  } else if (ev.key === " " ) {
+    space = true;
+  }
+});
+window.addEventListener("keyup", (ev) => { if (ev.key === " ") space = false; });
+
+buildPalette();
+try {
+  const saved = localStorage.getItem("bf-map-design-v1");
+  if (saved) applyPack(JSON.parse(saved));
+  else seedMap();
+} catch (err) {
+  seedMap();
+}
+resize();
+refreshInfo();
+document.getElementById("undo").disabled = true;
+document.getElementById("redo").disabled = true;
+</script>
+</body>
+</html>

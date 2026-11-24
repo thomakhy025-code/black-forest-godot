@@ -4,6 +4,7 @@ extends RefCounted
 
 const Balance = preload("res://scripts/balance.gd")
 const LabelScript = preload("res://scripts/world_label.gd")
+const MapDesign = preload("res://scripts/map_design.gd")
 const MAP_ART := "res://assets/art/map/"
 
 ## Server rooms only need the collision bodies and the sim records. Canvas
@@ -17,6 +18,9 @@ static func populate(match_node: Node2D, decorate: bool = true) -> void:
 	var parent: Node2D = match_node.get_node("World")
 	for child in parent.get_children():
 		child.free()
+	if MapDesign.cell_count() == int(Balance.MAP_W) * int(Balance.MAP_H):
+		_designed(parent, match_node)
+		return
 
 	var rivers: Array = []
 	var pond: PackedVector2Array = pond_outline(88.0)
@@ -131,6 +135,439 @@ static func populate(match_node: Node2D, decorate: bool = true) -> void:
 	match_node.isles = isles
 	match_node.water_polys = water
 	match_node.nodes = _wild(parent)
+
+
+static func _designed(parent: Node2D, match_node: Node2D) -> void:
+	_paint_ground(parent)
+	_bounds(parent)
+	for ridge_item in MapDesign.rects(3):
+		var ridge: Rect2 = ridge_item
+		_block(parent, ridge)
+	_floors(parent)
+	var walls: Array = _designed_walls(parent)
+	var rocks: Array = _designed_rocks(parent)
+	var keeps: Array = _designed_keeps(parent)
+	var towers: Array = _designed_towers(parent)
+	var outpost: Variant = _designed_outpost(parent)
+	var sewers: Array = _designed_sewers(parent)
+	var catapults: Array = _designed_catapults(parent)
+	var ladders: Array = _designed_ladders(parent)
+	var springs: Array = _designed_springs(parent)
+	var forges: Array = _designed_forges(parent)
+	var cakes: Array = _designed_cakes(parent)
+	var vaults: Array = _designed_vaults(parent)
+	var diamond_homes: Array = _designed_diamonds(parent)
+	var stones: Array = _designed_stones(parent)
+	var bridges: Array = []
+	for span_item in MapDesign.component_rects(6):
+		bridges.append(span_item)
+	var isles: Array = []
+	for isle_item in MapDesign.component_rects(8):
+		var isle_rect: Rect2 = isle_item
+		isles.append({
+			"pos": isle_rect.get_center(),
+			"r": maxf(isle_rect.size.x, isle_rect.size.y) * 0.5,
+			"h": 1.2,
+		})
+	_label(parent, Vector2(44, 3.1), "BLACK FOREST", Color(0.1, 0.08, 0.16))
+	_label(parent, Vector2(12, 16.5), "CRIMSON KEEP", Color(0.48, 0.06, 0.19))
+	_label(parent, Vector2(76, 16.5), "AZURE KEEP", Color(0.07, 0.24, 0.53))
+	match_node.walls = walls
+	match_node.trees = []
+	match_node.rocks = rocks
+	match_node.keeps = keeps
+	match_node.towers = towers
+	match_node.outpost = outpost
+	match_node.sewers = sewers
+	match_node.catapults = catapults
+	match_node.ladders = ladders
+	match_node.springs = springs
+	match_node.forges = forges
+	match_node.cakes = cakes
+	match_node.vaults = vaults
+	match_node.diamond_homes = diamond_homes
+	match_node.bridges = bridges
+	match_node.isles = isles
+	match_node.water_polys = []
+	match_node.ground = MapDesign.bytes()
+	match_node.stones = stones
+	match_node.nodes = _designed_nodes(parent)
+
+
+static func _paint_ground(parent: Node2D) -> void:
+	_poly(parent, PackedVector2Array([
+		Vector2(0, 0), Vector2(Balance.MAP_W, 0), Vector2(Balance.MAP_W, Balance.MAP_H), Vector2(0, Balance.MAP_H)
+	]), Color(0.2, 0.34, 0.14, 1))
+	var colors := {
+		1: Color(0.34, 0.48, 0.2, 1),
+		2: Color(0.55, 0.48, 0.32, 1),
+		7: Color(0.9, 0.82, 0.62, 1),
+		8: Color(0.45, 0.62, 0.3, 1),
+		4: Color(0.58, 0.44, 0.26, 1),
+		6: Color(0.54, 0.36, 0.18, 1),
+		5: Color(0.08, 0.28, 0.52, 0.96),
+		3: Color(0.48, 0.45, 0.4, 1),
+	}
+	for code in [1, 2, 7, 8, 4, 6, 5, 3]:
+		var color: Color = colors[code]
+		for rect_item in MapDesign.rects(int(code)):
+			var rect: Rect2 = rect_item
+			_poly(parent, rect_poly(rect), color)
+
+
+static func _rows(kind: String) -> Array:
+	var out: Array = []
+	for item in MapDesign.objects():
+		var row: Dictionary = item
+		if str(row.get("kind", "")) == kind:
+			out.append(row)
+	return out
+
+
+static func _by_team(kind: String) -> Array:
+	var rows: Array = _rows(kind)
+	var ordered: Array = []
+	for team in [0, 1, -1]:
+		for row in rows:
+			if int((row as Dictionary).get("team", -1)) == int(team):
+				ordered.append(row)
+	return ordered
+
+
+static func _obj_pos(row: Dictionary) -> Vector2:
+	return Vector2(float(row.get("x", 0.0)), float(row.get("y", 0.0)))
+
+
+static func _designed_walls(parent: Node2D) -> Array:
+	var walls: Array = []
+	for row in _rows("wall"):
+		walls.append(_place_barrier(parent, row, false))
+	for row in _rows("door"):
+		walls.append(_place_barrier(parent, row, true))
+	return walls
+
+
+static func _place_barrier(parent: Node2D, row: Dictionary, is_door: bool) -> Dictionary:
+	var rect := Rect2(float(row.get("x", 0.0)), float(row.get("y", 0.0)), float(row.get("w", 1.0)), float(row.get("h", 1.0)))
+	var team := int(row.get("team", -1))
+	var layer := Balance.LAYER_WALL
+	var color := Color(0.96, 0.91, 0.78)
+	if is_door:
+		layer = Balance.LAYER_DOOR_CRIMSON if team == 0 else Balance.LAYER_DOOR_AZURE
+		color = Color(0.78, 0.22, 0.28) if team == 0 else Color(0.22, 0.42, 0.82)
+	var body := StaticBody2D.new()
+	body.collision_layer = layer
+	body.collision_mask = 0
+	var shape := RectangleShape2D.new()
+	shape.size = rect.size
+	var col := CollisionShape2D.new()
+	col.shape = shape
+	col.position = rect.position + rect.size * 0.5
+	body.add_child(col)
+	parent.add_child(body)
+	var holder: Node2D = parent
+	var door_root: Node2D = null
+	if is_door and _decorate:
+		door_root = Node2D.new()
+		parent.add_child(door_root)
+		holder = door_root
+		door_root.visible = false
+	var visual: Polygon2D = null
+	if _decorate:
+		_drop(holder, rect_poly(rect), Vector2(0.08, 0.12))
+		visual = Polygon2D.new()
+		visual.polygon = rect_poly(rect)
+		visual.color = color
+		holder.add_child(visual)
+		if is_door:
+			var inset := Rect2(rect.position.x + rect.size.x * 0.22, rect.position.y + 0.04, rect.size.x * 0.56, rect.size.y * 0.22)
+			_poly(holder, rect_poly(inset), Color(1, 1, 1, 0.28))
+		else:
+			var foot := Rect2(rect.position.x, rect.position.y + rect.size.y * 0.62, rect.size.x, rect.size.y * 0.38)
+			_poly(holder, rect_poly(foot), Color(0.28, 0.2, 0.12, 0.9))
+			var lip := Rect2(rect.position.x, rect.position.y, rect.size.x, minf(0.1, rect.size.y * 0.18))
+			_poly(holder, rect_poly(lip), Color(1.0, 0.96, 0.86, 0.75))
+			_merlons(holder, rect)
+	if is_door:
+		col.disabled = true
+	var shown = door_root if door_root != null else visual
+	return {
+		"kind": "door" if is_door else "wall",
+		"team": team,
+		"rect": rect,
+		"hp": 0.0 if is_door else 1.0,
+		"max": 70.0 if is_door else 1.0,
+		"wood": 0,
+		"fiber": 0,
+		"shape": col,
+		"visual": shown,
+		"body": body,
+	}
+
+
+static func _designed_rocks(parent: Node2D) -> Array:
+	var rocks: Array = []
+	for row in _rows("rock"):
+		var pos := _obj_pos(row)
+		var radius := float(row.get("r", 1.73))
+		var body := StaticBody2D.new()
+		body.position = pos
+		body.collision_layer = Balance.LAYER_ROCK
+		body.collision_mask = 0
+		var shape := CircleShape2D.new()
+		shape.radius = radius
+		var col := CollisionShape2D.new()
+		col.shape = shape
+		body.add_child(col)
+		parent.add_child(body)
+		var visual: Polygon2D = null
+		if _decorate:
+			_drop(parent, circle_poly(pos, radius, 12), Vector2(0.1, 0.14))
+			visual = Polygon2D.new()
+			visual.polygon = circle_poly(pos, radius, 16)
+			visual.color = Color(0.38, 0.4, 0.46, 1)
+			parent.add_child(visual)
+			_poly(parent, circle_poly(pos + Vector2(-0.18, -0.16), radius * 0.42, 8), Color(0.72, 0.74, 0.78, 0.9))
+		rocks.append({"pos": pos, "r": radius, "hp": 48.0, "max": 48.0, "shape": col, "visual": visual})
+	return rocks
+
+
+static func _designed_keeps(parent: Node2D) -> Array:
+	var keeps: Array = []
+	var n := 0
+	for row in _rows("keep"):
+		var pos := _obj_pos(row)
+		var radius := float(row.get("r", 1.0))
+		var door_ang := 0.0 if pos.x < Balance.MAP_W * 0.5 else PI
+		var visual: Polygon2D = null
+		if _decorate:
+			_drop(parent, _keep_poly(pos, radius), Vector2(0.08, 0.16))
+			_poly(parent, _keep_poly(pos + Vector2(0.0, 0.12), radius), Color(0.22, 0.16, 0.1, 1))
+			visual = Polygon2D.new()
+			visual.polygon = _keep_poly(pos, radius)
+			visual.color = Color(0.95, 0.9, 0.78, 1)
+			parent.add_child(visual)
+			_poly(parent, _keep_poly(pos + Vector2(-0.04, -0.08), radius * 0.55), Color(1, 1, 1, 0.22))
+			_keep_trim(parent, pos, radius, door_ang)
+		keeps.append({
+			"id": "k%d" % n, "pos": pos, "r": radius, "door": door_ang,
+			"hp": 200.0, "max": 200.0, "owner": -1, "cap": 0.0, "cap_team": -1, "down": 0.0,
+			"visual": visual,
+		})
+		n += 1
+	return keeps
+
+
+static func _designed_towers(parent: Node2D) -> Array:
+	var towers: Array = []
+	for row in _rows("tower"):
+		var pos := _obj_pos(row)
+		var side := 0 if pos.x < Balance.MAP_W * 0.5 else 1
+		var radius := 1.2
+		var cap_r := 3.0
+		var dest := Vector2(15, 33) if side == 0 else Vector2(73, 33)
+		var title := str(row.get("name", "West Tower" if side == 0 else "East Tower"))
+		var visual: Polygon2D = null
+		if _decorate:
+			_ring(parent, pos, cap_r, Color(1, 1, 1, 0.35))
+			_drop(parent, _keep_poly(pos, radius), Vector2(0.08, 0.14))
+			_poly(parent, _keep_poly(pos + Vector2(0.0, 0.1), radius), Color(0.22, 0.16, 0.1, 1))
+			visual = Polygon2D.new()
+			visual.polygon = _keep_poly(pos, radius)
+			visual.color = Color(0.95, 0.9, 0.78, 1)
+			parent.add_child(visual)
+			_poly(parent, _keep_poly(pos + Vector2(-0.04, -0.06), radius * 0.5), Color(1, 1, 1, 0.2))
+			_keep_trim(parent, pos, radius, -PI * 0.5)
+			_label(parent, pos + Vector2(0, -radius - 0.4), title, Color(0.1, 0.08, 0.16))
+		towers.append({
+			"name": title, "pos": pos, "r": radius, "cap_r": cap_r,
+			"progress": 0.0, "owner": -1, "dest": dest, "side": side, "visual": visual,
+		})
+	return towers
+
+
+static func _designed_outpost(parent: Node2D) -> Variant:
+	var rows: Array = _rows("outpost")
+	if rows.is_empty():
+		return null
+	var row: Dictionary = rows[0]
+	var pos := _obj_pos(row)
+	var radius := float(row.get("r", 1.05))
+	var cap_r := 3.2
+	var visual: Polygon2D = null
+	if _decorate:
+		_ring(parent, pos, cap_r, Color(1, 0.85, 0.4, 0.45))
+		_drop(parent, _keep_poly(pos, radius), Vector2(0.08, 0.14))
+		_poly(parent, _keep_poly(pos + Vector2(0.0, 0.1), radius), Color(0.28, 0.18, 0.06, 1))
+		visual = Polygon2D.new()
+		visual.polygon = _keep_poly(pos, radius)
+		visual.color = Color(0.96, 0.84, 0.42, 1)
+		parent.add_child(visual)
+		_poly(parent, _keep_poly(pos + Vector2(-0.04, -0.06), radius * 0.5), Color(1, 0.95, 0.7, 0.28))
+		_keep_trim(parent, pos, radius, PI * 0.5)
+		_label(parent, pos + Vector2(0, -radius - 0.45), "MIDDLE OUTPOST", Color(0.1, 0.08, 0.16))
+	return {"name": "Middle Outpost", "pos": pos, "r": radius, "cap_r": cap_r, "progress": 0.0, "owner": -1, "visual": visual}
+
+
+static func _designed_sewers(parent: Node2D) -> Array:
+	var sewers: Array = []
+	for row in _by_team("sewer"):
+		var pos := _obj_pos(row)
+		var team := int(row.get("team", 0))
+		var radius := 0.65
+		var exit := Vector2(33, 24) if team == 0 else Vector2(55, 24)
+		var visual: Polygon2D = null
+		if _decorate:
+			visual = Polygon2D.new()
+			visual.polygon = circle_poly(pos, radius, 12)
+			visual.color = Color(0.42, 0.29, 0.16, 1)
+			parent.add_child(visual)
+		sewers.append({
+			"team": team, "pos": pos, "r": radius,
+			"hp": 32.0, "max": 32.0, "exit": exit, "visual": visual,
+		})
+	return sewers
+
+
+static func _designed_catapults(parent: Node2D) -> Array:
+	var out: Array = []
+	for row in _by_team("catapult"):
+		var pos := _obj_pos(row)
+		var team := int(row.get("team", 0))
+		var dest := Vector2(74, 26) if team == 0 else Vector2(14, 26)
+		_poly(parent, rect_poly(Rect2(pos.x - 0.4, pos.y - 0.18, 0.8, 0.36)), Color(0.54, 0.35, 0.2, 1))
+		out.append({"team": team, "pos": pos, "dest": dest})
+	return out
+
+
+static func _designed_ladders(parent: Node2D) -> Array:
+	var out: Array = []
+	for row in _rows("ladder"):
+		var pos := _obj_pos(row)
+		var to := pos + Vector2(0, -6)
+		if _decorate:
+			var line := Line2D.new()
+			line.points = PackedVector2Array([pos, to])
+			line.width = 0.12
+			line.default_color = Color(0.84, 0.69, 0.45, 1)
+			parent.add_child(line)
+		out.append({"pos": pos, "to": to})
+	return out
+
+
+static func _designed_springs(parent: Node2D) -> Array:
+	var out: Array = []
+	for row in _rows("spring"):
+		var pos := _obj_pos(row)
+		var toward := 1.0 if pos.x < Balance.MAP_W * 0.5 else -1.0
+		var to := Vector2(pos.x + toward * 2.0, pos.y + 7.0)
+		_poly(parent, circle_poly(pos, 0.35, 10), Color(0.45, 0.85, 0.55, 1))
+		out.append({"pos": pos, "to": to})
+	return out
+
+
+static func _designed_forges(parent: Node2D) -> Array:
+	var out: Array = []
+	for row in _rows("forge"):
+		var pos := _obj_pos(row)
+		var sword := str(row.get("weapon", "sword")) == "sword"
+		var color := Color(0.72, 0.4, 0.16, 0.95) if sword else Color(0.28, 0.48, 0.72, 0.95)
+		var pad := _poly(parent, rect_poly(Rect2(pos.x - 0.45, pos.y - 0.28, 0.9, 0.56)), color)
+		_ring(parent, pos, 0.55, color)
+		_label(parent, pos + Vector2(0, -0.95), "SWORD" if sword else "WAND", Color(0.15, 0.08, 0.05))
+		out.append({
+			"weapon": "sword" if sword else "wand",
+			"team": int(row.get("team", 0)),
+			"pos": pos,
+			"built": false,
+			"wood": 0,
+			"hide": 0,
+			"fiber": 0,
+			"visual": pad,
+		})
+	return out
+
+
+static func _designed_cakes(parent: Node2D) -> Array:
+	var cakes: Array = []
+	for row in _rows("cake"):
+		var pos := _obj_pos(row)
+		cakes.append({"pos": pos, "t": 0.0, "node": _cake_node(parent, pos)})
+	return cakes
+
+
+static func _designed_vaults(parent: Node2D) -> Array:
+	var vaults: Array = []
+	for row in _by_team("vault"):
+		var pos := _obj_pos(row)
+		var radius := float(row.get("r", 1.75))
+		_ring(parent, pos, radius, Color(0.91, 0.7, 0.23, 0.95))
+		_label(parent, pos + Vector2(0, -radius - 0.35), "VAULT", Color(0.15, 0.08, 0.05))
+		vaults.append({"pos": pos, "r": radius, "team": int(row.get("team", 0))})
+	return vaults
+
+
+static func _designed_diamonds(parent: Node2D) -> Array:
+	var homes: Array = []
+	for row in _by_team("diamond"):
+		var pos := _obj_pos(row)
+		_ring(parent, pos, 0.7, Color(0.95, 0.9, 0.75, 0.8))
+		_label(parent, pos + Vector2(0, -1.05), "TEAM DIAMOND", Color(0.1, 0.08, 0.16))
+		homes.append({"team": int(row.get("team", 0)), "home": pos})
+	return homes
+
+
+static func _designed_stones(parent: Node2D) -> Array:
+	var stones: Array = []
+	for row in _rows("stone"):
+		var pos := _obj_pos(row)
+		_stamp(parent, "rock.png", pos, 0.72)
+		stones.append(pos)
+	return stones
+
+
+static func _designed_nodes(parent: Node2D) -> Array:
+	var out: Array = []
+	for kind in ["tree", "plant", "animal"]:
+		for row in _rows(kind):
+			var pos := _obj_pos(row)
+			var hp := Balance.TREE_HP
+			var regrow := Balance.TREE_REGROW
+			var item := "wood"
+			var file := "tree.png"
+			var height := 2.35
+			var radius := 0.55
+			var lift := -0.45
+			if kind == "plant":
+				hp = Balance.PLANT_HP
+				regrow = Balance.PLANT_REGROW
+				item = "fiber"
+				file = "plant.png"
+				height = 0.75
+				radius = 0.32
+				lift = -0.1
+			elif kind == "animal":
+				hp = Balance.ANIMAL_HP
+				regrow = Balance.ANIMAL_REGROW
+				item = "hide"
+				file = "animal.png"
+				height = 0.9
+				radius = 0.4
+				lift = 0.0
+			out.append({
+				"kind": kind,
+				"item": item,
+				"pos": pos,
+				"home": pos,
+				"hp": hp,
+				"max": hp,
+				"down": 0.0,
+				"phase": randf() * TAU,
+				"regrow": regrow,
+				"r": radius,
+				"visual": _stamp(parent, file, pos + Vector2(0, lift), height),
+			})
+	return out
 
 
 static func _grass(parent: Node2D) -> void:

@@ -5,6 +5,7 @@ extends Node
 
 const Balance = preload("res://scripts/balance.gd")
 const SkillLook = preload("res://scripts/skill_look.gd")
+const MapDesign = preload("res://scripts/map_design.gd")
 
 const KNIGHT = preload("res://assets/models/characters/Knight.glb")
 const MAGE = preload("res://assets/models/characters/Mage.glb")
@@ -298,14 +299,63 @@ func _wipe(node: Node3D) -> void:
 
 
 func _build_map() -> void:
-	_ground()
-	_water()
-	_road()
+	if sim.ground.size() == MapDesign.W * MapDesign.H:
+		_designed_ground()
+	else:
+		_ground()
+		_water()
+		_road()
 	_yards()
 	_walls()
 	_props()
 	_forest()
 	_gems()
+
+
+func _designed_ground() -> void:
+	var grass := _mat("grass", Color(0.26, 0.42, 0.17), 1.0)
+	_plane(Vector2(Balance.MAP_W, Balance.MAP_H), Vector3(Balance.MAP_W * 0.5, 0.0, Balance.MAP_H * 0.5), grass)
+	_sheet_code(1, "meadow", Color(0.30, 0.46, 0.2), 1.0, 0.012)
+	_sheet_code(2, "sand", Color(0.62, 0.52, 0.34), 1.0, 0.008)
+	_sheet_code(7, "yard", Color(0.78, 0.68, 0.46), 0.9, 0.016)
+	_sheet_code(8, "isle", Color(0.45, 0.62, 0.3), 1.0, 0.05)
+	_sheet_code(4, "road", Color(0.62, 0.48, 0.28), 0.95, 0.03)
+	_sheet_code(5, "water", Color(0.16, 0.46, 0.78, 0.92), 0.08, -0.16)
+	_sheet_code(6, "plank", Color(0.56, 0.38, 0.2), 0.82, 0.1)
+	var rock := _mat("mountain", Color(0.45, 0.43, 0.39), 0.95)
+	for rect_item in MapDesign.rects(3):
+		var rect: Rect2 = rect_item
+		var center := rect.get_center()
+		_box(Vector3(rect.size.x, 0.85, rect.size.y), Vector3(center.x, 0.42, center.y), rock)
+	var rail := _mat("rail", Color(0.4, 0.26, 0.14), 0.9)
+	for item in sim.bridges:
+		var span: Rect2 = item
+		var c := span.get_center()
+		if span.size.x >= span.size.y:
+			_box(Vector3(span.size.x, 0.22, 0.08), Vector3(c.x, 0.28, span.position.y + 0.04), rail)
+			_box(Vector3(span.size.x, 0.22, 0.08), Vector3(c.x, 0.28, span.end.y - 0.04), rail)
+		else:
+			_box(Vector3(0.08, 0.22, span.size.y), Vector3(span.position.x + 0.04, 0.28, c.y), rail)
+			_box(Vector3(0.08, 0.22, span.size.y), Vector3(span.end.x - 0.04, 0.28, c.y), rail)
+
+
+func _sheet_code(code: int, key: String, color: Color, rough: float, y: float) -> void:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	for rect_item in MapDesign.rects(code):
+		var rect: Rect2 = rect_item
+		_quad(st, rect.position.x, rect.position.y, rect.end.x, rect.end.y, y)
+	_sheet(st, _mat(key, color, rough))
+
+
+func _code_at(pos: Vector2) -> int:
+	if sim.ground.size() != MapDesign.W * MapDesign.H:
+		return -1
+	var x := int(floor(pos.x))
+	var y := int(floor(pos.y))
+	if x < 0 or y < 0 or x >= MapDesign.W or y >= MapDesign.H:
+		return -1
+	return int(sim.ground[y * MapDesign.W + x])
 
 
 func _ground() -> void:
@@ -540,6 +590,12 @@ func _props() -> void:
 			_put("column", Vector3(ring.x, 0.0, ring.y), 0.0, Vector3(1.05, 1.15, 1.05))
 	for cake in sim.cakes:
 		_cake(cake["pos"])
+	var banks: Array = sim.stones
+	if sim.ground.size() != MapDesign.W * MapDesign.H:
+		banks = [Vector2(23.4, 21.5), Vector2(27.2, 27.5), Vector2(64.6, 21.5), Vector2(60.8, 27.5)]
+	for bank_item in banks:
+		var bank: Vector2 = bank_item
+		_put("rubble", Vector3(bank.x, 0.0, bank.y), float(_hash2(bank.x, bank.y)) * 0.5, Vector3(0.16, 0.14, 0.16))
 	for rock in sim.rocks:
 		var rp: Vector2 = rock["pos"]
 		var rock_s: float = float(rock["r"]) * 2.3 / 8.1
@@ -549,8 +605,6 @@ func _props() -> void:
 			"src": rock, "root": stone, "hp": float(rock.get("hp", 0.0)),
 			"buzz": 0.0, "kind": "rock", "at": rp, "scale": rock_scale,
 		})
-	for bank in [Vector2(23.4, 21.5), Vector2(27.2, 27.5), Vector2(64.6, 21.5), Vector2(60.8, 27.5)]:
-		_put("rubble", Vector3(bank.x, 0.0, bank.y), float(_hash2(bank.x, bank.y)) * 0.5, Vector3(0.16, 0.14, 0.16))
 
 
 func _flag(pos: Vector2, src) -> void:
@@ -628,7 +682,9 @@ func _forest() -> void:
 func _thicket(pos: Vector2, salt: int) -> void:
 	var pick := "dead" if (salt + _hash2(pos.x, pos.y)) % 3 != 0 else "pine"
 	var tall := 0.7 + float(salt % 3) * 0.08
-	_tree(pos, pick, tall, float(salt) * 0.8)
+	var node := _tree(pos, pick, tall, float(salt) * 0.8)
+	if node != null and _code_at(pos) == 3:
+		node.position.y = 0.85
 
 
 func _animal(pos: Vector2) -> Node3D:

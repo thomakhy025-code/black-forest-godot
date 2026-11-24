@@ -42,6 +42,8 @@ var diamond_homes: Array = []
 var bridges: Array = []
 var isles: Array = []
 var water_polys: Array = []
+var ground: PackedByteArray = PackedByteArray()
+var stones: Array = []
 var nodes: Array = []
 var piles: Array = []
 var weapon_drops: Array = []
@@ -405,6 +407,12 @@ func mask_for(team: int) -> int:
 
 
 func in_water(pos: Vector2) -> bool:
+	if ground.size() == 4400:
+		var x := int(floor(pos.x))
+		var y := int(floor(pos.y))
+		if x < 0 or y < 0 or x >= 88 or y >= 50:
+			return false
+		return ground[y * 88 + x] == 5
 	if _water_dirty:
 		_rebuild_water_bounds()
 		_water_dirty = false

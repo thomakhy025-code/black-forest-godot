@@ -3,6 +3,7 @@ extends Node
 
 const Balance = preload("res://scripts/balance.gd")
 const State = preload("res://scripts/state.gd")
+const MapDesign = preload("res://scripts/map_design.gd")
 const MatchScene = preload("res://scenes/match.tscn")
 
 var match_node: Node
@@ -30,12 +31,12 @@ func _ready() -> void:
 		if not u.is_player:
 			start_pos[u.unit_id] = u.global_position
 	_check("5v5", crimson == 5 and azure == 5)
-	_check("4 keeps", match_node.keeps.size() == 4)
+	_check("keeps follow the design", match_node.keeps.size() == MapDesign.count_kind("keep"))
 	for k in match_node.keeps:
 		_check("keep radius 1", absf(float(k["r"]) - 1.0) < 0.01)
-	_check("2 bridges", match_node.bridges.size() == 2)
-	_check("2 islands", match_node.isles.size() == 2)
-	_check("3 water polys", match_node.water_polys.size() == 3)
+	_check("bridges follow the design", match_node.bridges.size() == MapDesign.component_rects(6).size())
+	_check("islands follow the design", match_node.isles.size() == MapDesign.component_rects(8).size())
+	_check("map design loaded", match_node.ground.size() == MapDesign.W * MapDesign.H)
 	var doors := 0
 	for w in match_node.walls:
 		if w["kind"] == "door":
@@ -184,7 +185,8 @@ func _ready() -> void:
 	nia.force_update_transform()
 	_check_sword_skills()
 	_check("river water", match_node.in_water(Vector2(25, 25.5)))
-	_check("pond water", match_node.in_water(Vector2(44, 18)))
+	_check("lake water", match_node.in_water(Vector2(44, 11.5)))
+	_check("painted bridge is dry", not match_node.in_water(Vector2(44, 18.5)))
 	_check("castle dry", not match_node.in_water(Vector2(12, 25)))
 	var bridge: Rect2 = match_node.bridges[0]
 	_check("bridge dry", not match_node.in_water(bridge.position + bridge.size * 0.5))
