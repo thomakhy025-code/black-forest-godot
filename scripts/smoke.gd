@@ -389,6 +389,8 @@ func _check_raid() -> void:
 	var wand_built: bool = bool(wand.get("built", false))
 	var alarm0: float = float(match_node.attack_left[0])
 	var alarm1: float = float(match_node.attack_left[1])
+	var fought0: bool = bool(match_node.team_fought[0])
+	var fought1: bool = bool(match_node.team_fought[1])
 	match_node.attack_left[0] = 0.0
 	match_node.attack_left[1] = 0.0
 	for u in [nia, joss, pico, bram]:
@@ -427,9 +429,15 @@ func _check_raid() -> void:
 	nia.equip_weapon("sword", false)
 	nia.bot_lock = null
 	nia.bot_task = ""
-	_check("one weapon, fight with it", match_node.bot_order(nia) == "fight")
-	var held: Dictionary = match_node.bot_goal(nia)
-	_check("fight skips the gate and the wand", str(held.get("kind", "")) != "door" and str(held.get("kind", "")) != "forge" and str(held.get("kind", "")) != "node")
+	_check("one fixer stays on our gate", match_node.bot_order(nia) == "door")
+	joss.equip_weapon("sword", false)
+	joss.bot_lock = null
+	joss.bot_task = ""
+	joss.bot_fighting = false
+	_check("the others go for the diamond", match_node.bot_order(joss) == "steal")
+	var held: Dictionary = match_node.bot_goal(joss)
+	var held_at: Vector2 = held.get("pos", Vector2.ZERO)
+	_check("diamond is in the enemy castle", held_at.x > 60.0)
 	for u in [nia, joss, pico, bram]:
 		u.equip_weapon("sword", false)
 		u.wood = 0
@@ -439,33 +447,59 @@ func _check_raid() -> void:
 		u.bot_task = ""
 		u.bot_fighting = false
 	holt.global_position = nia.global_position + Vector2(-3.2, 0.0)
-	sable.global_position = Vector2(26, 22)
-	vex.global_position = Vector2(26, 29)
 	holt.force_update_transform()
-	sable.force_update_transform()
-	vex.force_update_transform()
-	_check("crowd, close one fights", match_node.bot_order(nia) == "fight")
-	_check("crowd, some make the other weapon", match_node.bot_order(bram) == "supply" and match_node.bot_order(joss) == "supply")
-	_check("crowd, some raise the gate", match_node.bot_order(pico) == "door")
-	bram.fiber = 1
-	bram.bot_lock = null
-	bram.bot_task = ""
-	var other: Dictionary = match_node.bot_goal(bram)
-	var other_ref = other.get("ref", {})
-	_check("other weapon is the wand", str(other.get("kind", "")) == "forge" and str(other_ref.get("weapon", "")) == "wand")
+	_check("close enemy is fought", match_node.bot_order(nia) == "fight")
 	pico.equip_weapon("none", false)
 	pico.bot_lock = null
 	pico.bot_task = ""
 	pico.bot_fighting = false
-	_check("gate crew arms first", match_node.bot_order(pico) == "arm")
-	holt.global_position = Vector2(24, 25)
+	_check("thieves arm before the run", match_node.bot_order(pico) == "arm")
+	pico.equip_weapon("sword", false)
+	holt.global_position = saved[holt]["pos"]
+	sable.global_position = saved[sable]["pos"]
+	vex.global_position = saved[vex]["pos"]
 	holt.force_update_transform()
-	nia.bot_fighting = false
-	_check("steps back, gate crew returns", match_node.bot_order(nia) == "door")
+	sable.force_update_transform()
+	vex.force_update_transform()
+	for u in [nia, joss, pico, bram]:
+		u.bot_lock = null
+		u.bot_task = ""
+		u.bot_fighting = false
+	_check("after the clash, one fixes the gate", match_node.bot_order(nia) == "door")
+	_check("after the clash, the rest steal", match_node.bot_order(joss) == "steal" and match_node.bot_order(bram) == "steal" and match_node.bot_order(pico) == "steal")
+	var east: Dictionary = match_node.bot_goal(joss)
+	var east_at: Vector2 = east.get("pos", Vector2.ZERO)
+	_check("the run stays on the diamond", east_at.x > 60.0)
+	var enemy_hp: Array = []
+	for w in match_node.walls:
+		if str(w.get("kind", "")) == "door" and int(w.get("team", -1)) == 1:
+			enemy_hp.append(float(w.get("hp", 0.0)))
+			w["hp"] = float(w.get("max", 70.0))
+	joss.bot_lock = null
+	joss.bot_task = ""
+	joss.bot_fighting = false
+	var breach: Dictionary = match_node.bot_goal(joss)
+	var breach_at: Vector2 = breach.get("pos", Vector2.ZERO)
+	_check("shut enemy gate is broken first", str(breach.get("kind", "")) == "breach" and breach_at.x > 60.0)
+	var door_i := 0
+	for w in match_node.walls:
+		if str(w.get("kind", "")) == "door" and int(w.get("team", -1)) == 1:
+			w["hp"] = float(enemy_hp[door_i])
+			door_i += 1
+	match_node.attack_left[0] = 0.0
+	match_node.team_fought[0] = true
+	for u in [nia, joss, pico, bram]:
+		u.bot_lock = null
+		u.bot_task = ""
+		u.bot_fighting = false
+	_check("fight over, still one on our gate", match_node.bot_order(nia) == "door")
+	_check("fight over, the rest still steal", match_node.bot_order(joss) == "steal" and match_node.bot_order(pico) == "steal")
 	sword["built"] = sword_built
 	wand["built"] = wand_built
 	match_node.attack_left[0] = alarm0
 	match_node.attack_left[1] = alarm1
+	match_node.team_fought[0] = fought0
+	match_node.team_fought[1] = fought1
 	for u in [nia, joss, pico, bram, holt, sable, vex]:
 		var row: Dictionary = saved[u]
 		u.global_position = row["pos"]

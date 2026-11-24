@@ -21,6 +21,7 @@ var clock := Balance.MATCH_TIME
 var takedowns := [0, 0]
 var shake := 0.0
 var attack_left: Array = [0.0, 0.0]
+var team_fought: Array = [false, false]
 var units: Array = []
 var player = null
 var diamonds: Array = []
@@ -898,20 +899,20 @@ func team_ready(team_id: int) -> bool:
 
 
 func bot_order(u) -> String:
-	# Quiet minutes stay on one job: both machines, then the gates, then a weapon.
-	# A hit on the team, or on its gate, opens a raid. One or two attackers means
-	# finish a single weapon and fight with it. A crowd splits the robots: some
-	# build the other weapon, some raise the gates while they already hold one.
-	# An attacker who steps in close is fought on the spot.
+	# Before the first weapon and the first fight, the team still builds both
+	# machines and then the gates. After that, the diamond is the trip. One
+	# robot, already armed, stays to fix our gate and only turns when an enemy
+	# is on top of them. Everyone else walks to the enemy castle, breaks a shut
+	# gate, and takes the diamond. An enemy they can see on that walk is a fight.
 	if u.carrying != null:
 		u.bot_fighting = false
 		return "home"
-	if not _under_attack(int(u.team)):
+	if not _on_offense(u):
 		if str(u.weapon) != "none" and _enemy_close(u):
 			return "fight"
 		u.bot_fighting = false
 		return _peace_order(u)
-	return _raid_order(u)
+	return _offense_order(u)
 
 
 func _peace_order(u) -> String:
@@ -921,31 +922,51 @@ func _peace_order(u) -> String:
 		return "door"
 	if str(u.weapon) == "none":
 		return "arm"
-	return "fight"
+	return "steal"
 
 
-func _raid_order(u) -> String:
+func _offense_order(u) -> String:
 	var team_id := int(u.team)
 	var armed := str(u.weapon) != "none"
-	if Supply.weapons_made(self, team_id) <= 0:
+	if Supply.weapons_made(self, team_id) <= 0 and not _team_armed(team_id):
 		if not armed:
 			u.bot_fighting = false
 			return "supply"
-		if _enemy_close(u) or enemies_pressing(team_id) < 3:
+		if _seen_enemy(u) != null:
 			return "fight"
-		if _swarm_duty(u) == "door" and not Supply.gates_ready(self, team_id):
-			return "door"
+		return "steal"
+	if _is_repairer(u):
+		if not armed:
+			u.bot_fighting = false
+			return "arm"
+		if _enemy_close(u):
+			return "fight"
+		u.bot_fighting = false
+		return "door"
+	if not armed:
+		u.bot_fighting = false
+		return "arm"
+	if _seen_enemy(u) != null:
 		return "fight"
-	if armed and _enemy_close(u):
-		return "fight"
-	if enemies_pressing(team_id) < 3:
-		return "fight" if armed else "arm"
-	var duty := _swarm_duty(u)
-	if duty == "second" and Supply.weapons_made(self, team_id) < 2:
-		return "supply" if armed else "arm"
-	if duty == "door" and not Supply.gates_ready(self, team_id):
-		return "door" if armed else "arm"
-	return "fight" if armed else "arm"
+	return "steal"
+
+
+func _on_offense(u) -> bool:
+	var team_id := int(u.team)
+	if team_id < 0 or team_id > 1:
+		return false
+	if _under_attack(team_id) or bool(team_fought[team_id]) or _team_armed(team_id):
+		return true
+	return false
+
+
+func _team_armed(team_id: int) -> bool:
+	for o in units:
+		if o.dead or int(o.team) != team_id:
+			continue
+		if str(o.weapon) != "none":
+			return true
+	return false
 
 
 func _under_attack(team_id: int) -> bool:
@@ -956,6 +977,52 @@ func note_attack(team_id: int) -> void:
 	if team_id < 0 or team_id > 1:
 		return
 	attack_left[team_id] = 8.0
+	team_fought[team_id] = true
+
+
+func _is_repairer(u) -> bool:
+	if u == null or u.dead or u.is_player:
+		return false
+	if Supply.gates_ready(self, int(u.team)):
+		return false
+	var picked = _repair_bot(int(u.team))
+	return picked == u
+
+
+func _repair_bot(team_id: int):
+	var best = null
+	for o in units:
+		if o.dead or o.is_player or int(o.team) != team_id:
+			continue
+		if best == null:
+			best = o
+			continue
+		var o_defend := str(o.role) == "defend"
+		var best_defend := str(best.role) == "defend"
+		if o_defend and not best_defend:
+			best = o
+		elif o_defend == best_defend and str(o.unit_id) < str(best.unit_id):
+			best = o
+	return best
+
+
+func _seen_enemy(u):
+	if str(u.weapon) == "none":
+		u.bot_fighting = false
+		return null
+	var limit := 12.0 if str(u.weapon) == "wand" else 10.0
+	if bool(u.bot_fighting):
+		limit += 3.0
+	var foe = nearest_enemy(u, limit)
+	if foe == null:
+		u.bot_fighting = false
+		return null
+	var dist: float = u.global_position.distance_to(foe.global_position)
+	if dist > 4.8 and not los(u.global_position, foe.global_position, int(u.team)):
+		u.bot_fighting = false
+		return null
+	u.bot_fighting = true
+	return foe
 
 
 func enemies_pressing(team_id: int) -> int:
@@ -995,23 +1062,6 @@ func _enemy_close(u) -> bool:
 	return foe != null
 
 
-func _swarm_duty(u) -> String:
-	var ids := PackedStringArray()
-	for o in units:
-		if o.dead or o.is_player or int(o.team) != int(u.team):
-			continue
-		ids.append(str(o.unit_id))
-	ids.sort()
-	var n := ids.size()
-	if n <= 1:
-		return "fight"
-	var makers := int(n / 2)
-	var idx := ids.find(str(u.unit_id))
-	if idx >= 0 and idx < makers:
-		return "second"
-	return "door"
-
-
 func bot_goal(u) -> Dictionary:
 	var order := bot_order(u)
 	if str(u.bot_task) != order:
@@ -1025,26 +1075,57 @@ func _fresh_bot_goal(u) -> Dictionary:
 	if order == "home":
 		return {"pos": vaults[u.team]["pos"], "unit": null, "kind": "move"}
 	if order == "fight":
-		var reach := 4.2
-		if str(u.weapon) == "wand":
-			reach = 6.4
-		if bool(u.bot_fighting):
-			reach += 1.6
-		if _under_attack(int(u.team)):
-			reach = 28.0
-		var foe = nearest_enemy(u, reach)
+		var foe = _seen_enemy(u)
+		if foe == null:
+			foe = nearest_enemy(u, 4.8)
 		if foe != null:
 			return {"pos": foe.global_position, "unit": foe, "kind": "chase"}
-		if _under_attack(int(u.team)):
-			var mine = diamonds[int(u.team)]
-			if mine != null and mine.carrier != null and int(mine.carrier.team) != int(u.team):
-				return {"pos": mine.carrier.global_position, "unit": mine.carrier, "kind": "chase"}
-			return {"pos": _yard_exit(int(u.team)), "unit": null, "kind": "move"}
-		return _steal_goal(u)
+		return _offense_goal(u)
+	if order == "steal":
+		return _offense_goal(u)
 	var job: Dictionary = Supply.bot_goal(self, u, order)
 	if not job.is_empty():
 		return job
+	if _on_offense(u):
+		return _offense_goal(u)
 	return {"pos": _yard_exit(u.team), "unit": null, "kind": "move"}
+
+
+func _offense_goal(u) -> Dictionary:
+	var mine = diamonds[int(u.team)]
+	if mine != null and mine.carrier != null and int(mine.carrier.team) != int(u.team):
+		return {"pos": mine.carrier.global_position, "unit": mine.carrier, "kind": "chase"}
+	var door = _blocking_door(u)
+	if door != null:
+		return {"pos": _breach_stand(door, u), "unit": null, "kind": "breach", "ref": door}
+	return _steal_goal(u)
+
+
+func _blocking_door(u):
+	var foe_team := 1 - int(u.team)
+	var best = null
+	var best_d := 100000.0
+	for w in walls:
+		if str(w.get("kind", "")) != "door" or int(w.get("team", -1)) != foe_team:
+			continue
+		if float(w.get("hp", 0.0)) <= 0.0:
+			return null
+		var stand: Vector2 = _breach_stand(w, u)
+		var dist: float = u.global_position.distance_to(stand)
+		if dist < best_d:
+			best_d = dist
+			best = w
+	return best
+
+
+func _breach_stand(door, u) -> Vector2:
+	var rect: Rect2 = door["rect"]
+	var center := rect.get_center()
+	var span := maxf(0.2, rect.size.y * 0.5 - 0.6)
+	var y := clampf(center.y + float(_lane_index(str(u.unit_id))) * 0.62, center.y - span, center.y + span)
+	if int(door.get("team", 0)) == 0:
+		return Vector2(rect.end.x + 1.05, y)
+	return Vector2(rect.position.x - 1.05, y)
 
 
 func _steal_goal(u) -> Dictionary:
@@ -1061,7 +1142,7 @@ func _steal_goal(u) -> Dictionary:
 
 func _hold_job(u, fresh: Dictionary) -> Dictionary:
 	var kind := str(fresh.get("kind", "move"))
-	if fresh.is_empty() or kind == "chase" or kind == "move":
+	if fresh.is_empty() or kind == "chase" or kind == "move" or kind == "breach":
 		u.bot_lock = null
 		u.bot_stuck = false
 		return fresh

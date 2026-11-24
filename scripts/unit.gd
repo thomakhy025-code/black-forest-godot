@@ -368,30 +368,30 @@ func read_player() -> void:
 func tick_bot(dt: float) -> void:
 	_note_stuck(dt)
 	var order := str(sim.bot_order(self))
-	if order == "fight":
+	if order == "fight" or order == "steal":
 		if cast == null and dash == null:
 			var foe = sim.nearest_enemy(self, 2.1)
 			var door = sim.enemy_door(self)
 			var acted := false
-			if skills.get("fireball", false) and float(cds.get("fireball", 0.0)) <= 0.0 and foe == null:
+			if order == "fight" and skills.get("fireball", false) and float(cds.get("fireball", 0.0)) <= 0.0 and foe == null:
 				var shot = sim.nearest_enemy(self, 12.0)
 				if shot != null and global_position.distance_to(shot.global_position) > 4.0 and sim.los(global_position, shot.global_position, team):
 					cast_face = (shot.global_position - global_position).angle()
 					has_cast_face = true
 					facing = cast_face
 					acted = try_cast("fireball")
-			if not acted and skills.get("ignite", false) and float(cds.get("ignite", 0.0)) <= 0.0 and fire_sword_t <= 0.0:
+			if not acted and order == "fight" and skills.get("ignite", false) and float(cds.get("ignite", 0.0)) <= 0.0 and fire_sword_t <= 0.0:
 				var near = sim.nearest_enemy(self, 8.0)
 				if near != null and sim.los(global_position, near.global_position, team):
 					facing = (near.global_position - global_position).angle()
 					acted = try_cast("ignite")
-			if not acted and skills.get("ember", false) and float(cds.get("ember", 0.0)) <= 0.0:
+			if not acted and order == "fight" and skills.get("ember", false) and float(cds.get("ember", 0.0)) <= 0.0:
 				var beam = sim.nearest_enemy(self, 14.0)
 				if beam != null and global_position.distance_to(beam.global_position) > 2.4:
 					facing = (beam.global_position - global_position).angle()
 					if sim.saber_worth(self):
 						acted = try_cast("ember")
-			if not acted and skills.get("spark", false) and float(cds.get("spark", 0.0)) <= 0.0:
+			if not acted and order == "fight" and skills.get("spark", false) and float(cds.get("spark", 0.0)) <= 0.0:
 				var gap = sim.nearest_enemy(self, 8.0)
 				if gap != null and global_position.distance_to(gap.global_position) > 1.6 and sim.los(global_position, gap.global_position, team):
 					cast_face = (gap.global_position - global_position).angle()
