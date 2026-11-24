@@ -1392,7 +1392,7 @@ func begin_saber(u) -> void:
 	ch.len = Balance.SABER_LEN
 	ch.w = Balance.SABER_W
 	u.channel = ch
-	float_at(u.global_position + Vector2(0, -0.9), "BEAM", Color(1, 0.88, 0.2))
+	float_at(u.global_position + Vector2(0, -0.9), "SLASH", Color(1, 0.88, 0.2))
 
 
 func detonate_mega(u, ch) -> void:

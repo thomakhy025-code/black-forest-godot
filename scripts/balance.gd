@@ -92,8 +92,8 @@ const SKILLS := {
 		"blurb": "After 0.5s, dash 8 m in the direction you are facing. 0.25s, passes through enemies, 10 lightning damage, and you cannot be hit during the dash. 10% MP. 5s cooldown."
 	},
 	"ember": {
-		"name": "Lightsaber Beam", "pool": "sword", "key": "3", "cast": 3.0, "cd": 24.0, "mp": 0.0, "mp_flat": 50.0,
-		"blurb": "Channel 3s. You cannot move, attack, or use other skills. A pale yellow 15 m by 4 m lane warns the whole time, then deals 75 damage to everyone in it, teammates included. 50 MP. 24s cooldown."
+		"name": "Slash", "pool": "sword", "key": "3", "cast": 3.0, "cd": 24.0, "mp": 0.0, "mp_flat": 50.0,
+		"blurb": "Channel 3s. You cannot move, attack, or use other skills. A slash faces the way you face. A faint 15 m by 4 m lane warns the whole time, then deals 75 damage to everyone in it, teammates included. 50 MP. 24s cooldown."
 	},
 	"fireball": {
 		"name": "Fireball", "pool": "magic", "key": "1", "cast": 0.5, "cd": 8.0, "mp": 0.25,
@@ -110,7 +110,7 @@ const SKILLS := {
 }
 
 const SHORT := {
-	"ignite": "Fire", "spark": "Bolt", "ember": "Beam",
+	"ignite": "Fire", "spark": "Bolt", "ember": "Slash",
 	"fireball": "Fire", "ice": "Ice", "mega": "Boom"
 }
 
