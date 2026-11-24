@@ -315,13 +315,13 @@ func _build_map() -> void:
 func _designed_ground() -> void:
 	# One sheet per code, sharing a height. A full-map grass plane under the other biomes z-fights on GL.
 	var ground_y := 0.02
-	_sheet_code(0, "grass", Color(0.26, 0.42, 0.17), 1.0, ground_y)
-	_sheet_code(1, "meadow", Color(0.90, 0.97, 0.78, 1.0), 1.0, ground_y)
+	_sheet_code(0, "grass", Color.html("#98FB98"), 1.0, ground_y)
+	_sheet_code(1, "meadow", Color.html("#98FB98"), 1.0, ground_y)
 	_sheet_code(2, "sand", Color(0.62, 0.52, 0.34), 1.0, ground_y)
 	_sheet_code(7, "yard", Color(0.78, 0.68, 0.46), 0.9, ground_y)
 	_sheet_code(8, "isle", Color(0.45, 0.62, 0.3), 1.0, ground_y)
 	_sheet_code(4, "road", Color(0.62, 0.48, 0.28), 0.95, ground_y)
-	_sheet_code(5, "water", Color(0.82, 0.95, 0.99, 1.0), 0.08, -0.04)
+	_sheet_code(5, "water", Color.html("#ADD8E6"), 0.08, -0.04)
 	_sheet_code(6, "plank", Color(0.56, 0.38, 0.2), 0.82, 0.1)
 	var rock := _mat("mountain", Color(0.45, 0.43, 0.39), 0.95)
 	for rect_item in MapDesign.rects(3):

@@ -197,15 +197,15 @@ static func _designed(parent: Node2D, match_node: Node2D) -> void:
 static func _paint_ground(parent: Node2D) -> void:
 	_poly(parent, PackedVector2Array([
 		Vector2(0, 0), Vector2(Balance.MAP_W, 0), Vector2(Balance.MAP_W, Balance.MAP_H), Vector2(0, Balance.MAP_H)
-	]), Color(0.2, 0.34, 0.14, 1))
+	]), Color.html("#98FB98"))
 	var colors := {
-		1: Color(0.90, 0.97, 0.78, 1.0),
+		1: Color.html("#98FB98"),
 		2: Color(0.55, 0.48, 0.32, 1),
 		7: Color(0.9, 0.82, 0.62, 1),
 		8: Color(0.45, 0.62, 0.3, 1),
 		4: Color(0.58, 0.44, 0.26, 1),
 		6: Color(0.54, 0.36, 0.18, 1),
-		5: Color(0.82, 0.95, 0.99, 1.0),
+		5: Color.html("#ADD8E6"),
 		3: Color(0.48, 0.45, 0.4, 1),
 	}
 	for code in [1, 2, 7, 8, 4, 6, 5, 3]:
