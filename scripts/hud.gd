@@ -450,8 +450,6 @@ func _armory() -> void:
 
 
 func _build() -> void:
-	_scrim(true)
-	_scrim(false)
 	var top := MarginContainer.new()
 	top.set_anchors_preset(Control.PRESET_TOP_WIDE)
 	top.offset_bottom = 92
@@ -506,6 +504,16 @@ func _build() -> void:
 	restart_btn.pressed.connect(_restart)
 	btns.add_child(help_btn)
 	btns.add_child(restart_btn)
+	var full_btn := Button.new()
+	full_btn.text = "Full screen"
+	full_btn.focus_mode = Control.FOCUS_NONE
+	full_btn.pressed.connect(_toggle_full)
+	var layout_btn := Button.new()
+	layout_btn.text = "Layout"
+	layout_btn.focus_mode = Control.FOCUS_NONE
+	layout_btn.pressed.connect(_toggle_layout)
+	btns.add_child(full_btn)
+	btns.add_child(layout_btn)
 
 	var bottom := MarginContainer.new()
 	bottom_bar = bottom
@@ -643,17 +651,20 @@ func _bar(color: Color) -> ProgressBar:
 	return bar
 
 
-func _scrim(top: bool) -> void:
-	var band := ColorRect.new()
-	band.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	band.color = Color(0.05, 0.04, 0.03, 0.62)
-	if top:
-		band.set_anchors_preset(Control.PRESET_TOP_WIDE)
-		band.offset_bottom = 188.0
+func _toggle_full() -> void:
+	if OS.has_feature("web"):
+		JavaScriptBridge.eval("if (document.fullscreenElement) { document.exitFullscreen(); } else { document.documentElement.requestFullscreen(); }", true)
+		return
+	var mode := DisplayServer.window_get_mode()
+	if mode == DisplayServer.WINDOW_MODE_FULLSCREEN or mode == DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN:
+		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
 	else:
-		band.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
-		band.offset_top = -140.0
-	add_child(band)
+		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
+
+
+func _toggle_layout() -> void:
+	if touch != null and touch.has_method("toggle_layout"):
+		touch.call("toggle_layout")
 
 
 func _label(text: String, size: int) -> Label:
@@ -701,7 +712,7 @@ func _sheet(parent: Control) -> VBoxContainer:
 func _help_copy() -> String:
 	return """[b]You are Crimson.[/b] Steal the Azure diamond and hold it in your vault for [b]10 seconds[/b]. If a carrier dies, the diamond stays where they fell. Only Crimson can return the Crimson diamond: carry it into your vault and it snaps home at once. Azure wins the same way with yours.
 
-[b]WASD[/b] move. Right-click walks. On the web build and on a touch screen, drag the stick in from the lower-left corner. Keys win while they are held. Attacks follow the direction you are facing. [b]J[/b], left-click, or the large Attack button. The three weapon skills sit in an arc above Attack. Throw and Defense appear beside those skills only while you carry a diamond.
+[b]WASD[/b] move. Right-click walks. On a touch screen, put a finger down anywhere that is not a button and the stick follows that finger. Layout moves and resizes the buttons. Full screen fills the display. Keys win while they are held. Attacks follow the direction you are facing. [b]J[/b], left-click, or the large Attack button. The three weapon skills sit in an arc above Attack. Throw and Defense appear beside those skills only while you carry a diamond.
 You spawn bare-handed. A punch does [b]5[/b] damage in a 1.4 m arc. Chop grove trees for wood, plants for fiber, and the small animals for hide. You can hold 3 of each. Every item you carry takes 7 percent off your speed, down to 45 percent. Skills, swings, hops, and dashes still work. [b]F[/b] drops the bag when you are not holding a diamond. Drop does it even if you are. Teammates and enemies can take a pile.
 Each keep has a sword machine and a wand machine. They start unbuilt. [b]E[/b] at your own machine stores whatever it still needs. A sword takes 4 wood and 2 hide. A wand takes 1 wood, 2 hide, and 3 fiber. The delivery that finishes it also arms you. After that, anyone can take that weapon for free, even an enemy who has not built their own. An enemy cannot spend resources on your machine. Gates start open. Build one with 3 wood and 1 fiber. Repair a damaged gate with 1 wood, then the repair channel.
 On death the bag falls where you fell, and a held weapon lies there for 3 seconds. You respawn bare-handed. Swapping weapons does not refresh cooldowns.

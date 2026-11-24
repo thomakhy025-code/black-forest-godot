@@ -50,7 +50,8 @@ func blank() -> Dictionary:
 		"tokens": 0,
 		"wins": 0,
 		"matches": 0,
-		"help_seen": false
+		"help_seen": false,
+		"touch_layout": {}
 	}
 
 
