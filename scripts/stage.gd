@@ -28,6 +28,11 @@ const DEAD = preload("res://assets/models/forest/tree_dead_large.gltf")
 const DEAD_S = preload("res://assets/models/forest/tree_dead_medium.gltf")
 const PINE = preload("res://assets/models/forest/tree_pine_yellow_large.gltf")
 const PINE_S = preload("res://assets/models/forest/tree_pine_orange_medium.gltf")
+# Fourteen dungeon files are the same atlas. One resident copy is enough.
+const DUNGEON_ATLAS = preload("res://assets/models/dungeon/wall_dungeon_texture.png")
+const ROGUE_TEX = preload("res://assets/models/characters/Rogue_rogue_texture.png")
+# Tree fade steps share a material. WebGL cannot use per-instance uniforms safely.
+const FADE_LEVELS := 12
 
 # glTF heroes face +Z. Match facing 0 looks along +X, so the yaw is a quarter turn minus facing.
 const FACE_OFFSET := PI * 0.5
@@ -90,6 +95,8 @@ var actors := {}
 var ghosts: Array = []
 var harvest: Array = []
 var cover: Array = []
+var mesh_parts: Dictionary = {}
+var textures_shared := false
 var strikes: Array = []
 var chips: Array = []
 var chip_i := 0
@@ -226,7 +233,8 @@ func _build_view() -> void:
 	view.transparent_bg = false
 	view.handle_input_locally = false
 	view.render_target_update_mode = SubViewport.UPDATE_ALWAYS
-	view.msaa_3d = Viewport.MSAA_2X
+	# The view tracks the window. 2x MSAA resolves that buffer every frame on WebGL.
+	view.msaa_3d = Viewport.MSAA_DISABLED
 	view.size = Vector2i(1280, 720)
 	box.add_child(view)
 	world = Node3D.new()
@@ -256,6 +264,8 @@ func _build_view() -> void:
 	sun.light_color = Color(1.0, 0.92, 0.78)
 	sun.light_energy = 0.82
 	sun.shadow_enabled = true
+	# The default four splits redraw every caster four times. One map keeps the shade.
+	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_ORTHOGONAL
 	sun.shadow_bias = 0.05
 	sun.shadow_normal_bias = 0.8
 	sun.directional_shadow_max_distance = 52.0
@@ -317,6 +327,9 @@ func _wipe(node: Node3D) -> void:
 
 
 func _build_map() -> void:
+	if not textures_shared:
+		textures_shared = true
+		_share_atlases()
 	if sim.ground.size() == MapDesign.W * MapDesign.H:
 		_designed_ground()
 	else:
@@ -500,10 +513,13 @@ func _tile_floor(rect: Rect2) -> void:
 	var nz := 5
 	var sx := rect.size.x / float(nx)
 	var sz := rect.size.y / float(nz)
+	var items: Array = []
 	for i in nx:
 		for j in nz:
 			var pos := Vector3(rect.position.x + sx * (float(i) + 0.5), 0.0, rect.position.y + sz * (float(j) + 0.5))
-			_put("tile", pos, 0.0, Vector3(sx / 4.0, 1.0, sz / 4.0))
+			items.append({"pos": pos, "yaw": 0.0, "scl": Vector3(sx / 4.0, 1.0, sz / 4.0)})
+	# Copies of one tile. They never move, and a ground slab has nothing to shadow.
+	_place_many("tile", items, false)
 
 
 func _walls() -> void:
@@ -527,10 +543,12 @@ func _tile_wall(rect: Rect2) -> void:
 	var center := rect.get_center()
 	var start := (rect.position.x if along_x else rect.position.y) + each * 0.5
 	var yaw := 0.0 if along_x else -PI * 0.5
+	var items: Array = []
 	for i in count:
 		var at := start + each * float(i)
 		var pos := Vector3(at if along_x else center.x, 0.0, center.y if along_x else at)
-		_put("wall", pos, yaw, scl)
+		items.append({"pos": pos, "yaw": yaw, "scl": scl})
+	_place_many("wall", items, true)
 
 
 func _add_door(door, rect: Rect2) -> void:
@@ -572,8 +590,10 @@ func _corners() -> void:
 			max_y = maxf(max_y, rect.end.y)
 		if not any:
 			continue
+		var items: Array = []
 		for corner in [Vector2(min_x, min_y), Vector2(max_x, min_y), Vector2(min_x, max_y), Vector2(max_x, max_y)]:
-			_put("pillar", Vector3(corner.x, 0.0, corner.y), 0.0, Vector3(0.7, 0.72, 0.7))
+			items.append({"pos": Vector3(corner.x, 0.0, corner.y), "yaw": 0.0, "scl": Vector3(0.7, 0.72, 0.7)})
+		_place_many("pillar", items, true)
 
 
 func _gate_dressing() -> void:
@@ -596,8 +616,13 @@ func _gate_dressing() -> void:
 		_put("pillar", Vector3(x, 0.0, max_y), 0.0, Vector3(0.58, 0.66, 0.58))
 		var side := -1.0 if team == 0 else 1.0
 		var yaw := -PI * 0.5 if team == 0 else PI * 0.5
-		_put("torch", Vector3(x + side * 0.95, 1.55, min_y - 0.45), yaw, Vector3(1.15, 1.15, 1.15))
-		_put("torch", Vector3(x + side * 0.95, 1.55, max_y + 0.45), yaw, Vector3(1.15, 1.15, 1.15))
+		var torch_scl := Vector3(1.15, 1.15, 1.15)
+		var torch_a := Vector3(x + side * 0.95, 1.55, min_y - 0.45)
+		var torch_b := Vector3(x + side * 0.95, 1.55, max_y + 0.45)
+		_put("torch", torch_a, yaw, torch_scl)
+		_put("torch", torch_b, yaw, torch_scl)
+		# The two flames sit about 8m apart and their old ranges mostly overlapped.
+		_gate_lamp(_torch_point(torch_a, yaw, torch_scl), _torch_point(torch_b, yaw, torch_scl))
 		var banner := "banner_red" if team == 0 else "banner_blue"
 		_put(banner, Vector3(x + side * 2.6, -0.42, (min_y + max_y) * 0.5), yaw, Vector3(0.82, 0.82, 0.82))
 		var cloth := Color(0.82, 0.16, 0.24) if team == 0 else Color(0.18, 0.38, 0.82)
@@ -641,18 +666,26 @@ func _props() -> void:
 	for vault in sim.vaults:
 		var vp: Vector2 = vault["pos"]
 		var vr := float(vault["r"])
+		var columns: Array = []
 		for i in 6:
 			var a := TAU * float(i) / 6.0
 			var ring := vp + Vector2(cos(a), sin(a)) * vr
-			_put("column", Vector3(ring.x, 0.0, ring.y), 0.0, Vector3(1.05, 1.15, 1.05))
+			columns.append({"pos": Vector3(ring.x, 0.0, ring.y), "yaw": 0.0, "scl": Vector3(1.05, 1.15, 1.05)})
+		_place_many("column", columns, true)
 	for cake in sim.cakes:
 		_cake(cake["pos"])
 	var banks: Array = sim.stones
 	if sim.ground.size() != MapDesign.W * MapDesign.H:
 		banks = [Vector2(23.4, 21.5), Vector2(27.2, 27.5), Vector2(64.6, 21.5), Vector2(60.8, 27.5)]
+	var piles: Array = []
 	for bank_item in banks:
 		var bank: Vector2 = bank_item
-		_put("rubble", Vector3(bank.x, 0.0, bank.y), float(_hash2(bank.x, bank.y)) * 0.5, Vector3(0.16, 0.14, 0.16))
+		piles.append({
+			"pos": Vector3(bank.x, 0.0, bank.y),
+			"yaw": float(_hash2(bank.x, bank.y)) * 0.5,
+			"scl": Vector3(0.16, 0.14, 0.16),
+		})
+	_place_many("rubble", piles, true)
 	for rock in sim.rocks:
 		var rp: Vector2 = rock["pos"]
 		var rock_s: float = float(rock["r"]) * 2.3 / 8.1
@@ -1703,10 +1736,6 @@ func _sphere(radius: float, pos: Vector3, mat: Material) -> MeshInstance3D:
 
 func _tree(pos: Vector2, key: String, scl: float, yaw: float) -> Node3D:
 	var node := _put(key, Vector3(pos.x, 0.0, pos.y), yaw, Vector3(scl, scl, scl))
-	if node != null and (key == "pine" or key == "pine_s"):
-		# The source pines are yellow and orange. Dye them a deeper green.
-		var dye := Color(0.22, 0.42, 0.16) if key == "pine" else Color(0.32, 0.5, 0.24)
-		_tint_meshes(node, dye)
 	if node != null:
 		_watch_tree(node, key, scl)
 	return node
@@ -1721,13 +1750,6 @@ func _put(key: String, pos: Vector3, yaw: float, scl: Vector3) -> Node3D:
 	node.rotation.y = yaw
 	node.scale = scl
 	if key == "torch":
-		var lamp := OmniLight3D.new()
-		lamp.light_color = Color(1.0, 0.58, 0.24)
-		lamp.light_energy = 1.35
-		lamp.omni_range = 7.5
-		lamp.shadow_enabled = false
-		lamp.position = Vector3(0.0, 0.55, 0.32)
-		node.add_child(lamp)
 		var flame := MeshInstance3D.new()
 		var ball := SphereMesh.new()
 		ball.radius = 0.07
@@ -1744,6 +1766,140 @@ func _put(key: String, pos: Vector3, yaw: float, scl: Vector3) -> Node3D:
 		flame.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		node.add_child(flame)
 	return node
+
+
+func _torch_point(pos: Vector3, yaw: float, scl: Vector3) -> Vector3:
+	var basis := Basis(Vector3.UP, yaw).scaled(scl)
+	return pos + basis * Vector3(0.0, 0.55, 0.32)
+
+
+func _gate_lamp(a: Vector3, b: Vector3) -> void:
+	var lamp := OmniLight3D.new()
+	lamp.light_color = Color(1.0, 0.58, 0.24)
+	lamp.light_energy = 1.35
+	# The old lamp was a child of a 1.15 torch, which scaled this range.
+	lamp.omni_range = 7.5 * 1.15
+	lamp.shadow_enabled = false
+	lamp.position = (a + b) * 0.5
+	map_root.add_child(lamp)
+
+
+func _place_many(key: String, items: Array, shadows: bool) -> void:
+	if items.is_empty():
+		return
+	if items.size() < 3:
+		for item in items:
+			var row: Dictionary = item
+			var pos: Vector3 = row["pos"]
+			var yaw: float = float(row["yaw"])
+			var scl: Vector3 = row["scl"]
+			_put(key, pos, yaw, scl)
+		return
+	var parts: Array = _mesh_parts(key)
+	if parts.is_empty():
+		for item2 in items:
+			var row2: Dictionary = item2
+			var pos2: Vector3 = row2["pos"]
+			var yaw2: float = float(row2["yaw"])
+			var scl2: Vector3 = row2["scl"]
+			_put(key, pos2, yaw2, scl2)
+		return
+	for part in parts:
+		var info: Dictionary = part
+		var mesh: Mesh = info["mesh"]
+		var rest: Transform3D = info["rest"]
+		var mm := MultiMesh.new()
+		mm.transform_format = MultiMesh.TRANSFORM_3D
+		mm.mesh = mesh
+		mm.instance_count = items.size()
+		var index := 0
+		for item3 in items:
+			var row3: Dictionary = item3
+			var pos3: Vector3 = row3["pos"]
+			var yaw3: float = float(row3["yaw"])
+			var scl3: Vector3 = row3["scl"]
+			var basis := Basis(Vector3.UP, yaw3).scaled(scl3)
+			mm.set_instance_transform(index, Transform3D(basis, pos3) * rest)
+			index += 1
+		var batched := MultiMeshInstance3D.new()
+		batched.multimesh = mm
+		if not shadows:
+			batched.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		map_root.add_child(batched)
+
+
+func _mesh_parts(key: String) -> Array:
+	if mesh_parts.has(key):
+		return mesh_parts[key]
+	var found: Array = []
+	var node := _instance(key)
+	if node == null:
+		mesh_parts[key] = found
+		return found
+	var meshes: Array = _mesh_nodes(node)
+	for mesh in meshes:
+		var mi := mesh as MeshInstance3D
+		if mi == null or mi.mesh == null:
+			continue
+		found.append({"mesh": mi.mesh, "rest": _rest_under(node, mi)})
+	node.free()
+	mesh_parts[key] = found
+	return found
+
+
+func _rest_under(root: Node3D, mi: MeshInstance3D) -> Transform3D:
+	var xf := Transform3D.IDENTITY
+	var at: Node = mi
+	while at != null and at != root:
+		if at is Node3D:
+			xf = (at as Node3D).transform * xf
+		at = at.get_parent()
+	return xf
+
+
+func _mesh_nodes(node: Node) -> Array:
+	var meshes: Array = []
+	if node is MeshInstance3D:
+		meshes.append(node)
+	meshes.append_array(node.find_children("*", "MeshInstance3D", true, false))
+	return meshes
+
+
+func _share_atlases() -> void:
+	var keys: Array[String] = ["wall", "doorway", "pillar", "column", "tile", "wood", "banner_red", "banner_blue", "chest", "barrel", "rubble", "torch"]
+	for key in keys:
+		var node := _instance(key)
+		if node == null:
+			continue
+		_point_texture(node, DUNGEON_ATLAS, "dungeon")
+		node.free()
+	var hooded := _instance("hooded")
+	if hooded != null:
+		_point_texture(hooded, ROGUE_TEX, "Rogue_Hooded")
+		hooded.free()
+
+
+func _point_texture(node: Node, atlas: Texture2D, marker: String) -> void:
+	var meshes: Array = _mesh_nodes(node)
+	for mesh in meshes:
+		var mi := mesh as MeshInstance3D
+		if mi == null or mi.mesh == null:
+			continue
+		var surface_count := mi.mesh.get_surface_count()
+		for index in surface_count:
+			var mat: Material = mi.mesh.surface_get_material(index)
+			if not (mat is StandardMaterial3D):
+				continue
+			var sm := mat as StandardMaterial3D
+			var tex := sm.albedo_texture
+			if tex == atlas:
+				continue
+			if tex == null:
+				sm.albedo_texture = atlas
+				continue
+			var path := tex.resource_path
+			if path.is_empty() or path.contains(marker):
+				sm.albedo_texture = atlas
 
 
 func _instance(key: String) -> Node3D:
@@ -2032,26 +2188,35 @@ func _fx_mat(key: String, color: Color) -> StandardMaterial3D:
 
 
 func _tint_meshes(node: Node, color: Color, alpha: float = 1.0) -> void:
-	var meshes: Array = []
-	if node is MeshInstance3D:
-		meshes.append(node)
-	else:
-		meshes = node.find_children("*", "MeshInstance3D", true, false)
+	var meshes: Array = _mesh_nodes(node)
 	for mesh in meshes:
 		var mi := mesh as MeshInstance3D
 		if mi == null:
 			continue
-		var mat := StandardMaterial3D.new()
-		var base = mi.get_active_material(0)
-		if base is StandardMaterial3D:
-			mat.albedo_texture = (base as StandardMaterial3D).albedo_texture
-		mat.albedo_color = color
-		mat.roughness = 0.82
-		if alpha < 0.99:
-			mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-			mat.albedo_color.a = alpha
-			mat.cull_mode = BaseMaterial3D.CULL_DISABLED
-		mi.set_surface_override_material(0, mat)
+		var base: Material = mi.get_active_material(0)
+		mi.set_surface_override_material(0, _shared_tint(base, color, alpha))
+
+
+func _shared_tint(base: Material, color: Color, alpha: float) -> StandardMaterial3D:
+	var tex: Texture2D = null
+	var sig := "0"
+	if base is StandardMaterial3D:
+		tex = (base as StandardMaterial3D).albedo_texture
+		if tex != null:
+			sig = str(tex.get_instance_id())
+	var id := "tint:%s:%s:%0.3f" % [sig, color.to_html(false), alpha]
+	if mats.has(id):
+		return mats[id] as StandardMaterial3D
+	var mat := StandardMaterial3D.new()
+	mat.albedo_texture = tex
+	mat.albedo_color = color
+	mat.roughness = 0.82
+	if alpha < 0.99:
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		mat.albedo_color.a = alpha
+		mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mats[id] = mat
+	return mat
 
 
 func _is_prop(node_name: String) -> bool:
@@ -2095,11 +2260,7 @@ func _hero_key(id: String) -> String:
 
 func _splinters(parent: Node3D) -> Array:
 	var bits: Array = []
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(0.62, 0.44, 0.22)
-	mat.roughness = 0.86
-	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	var mat := _splinter_mat(0)
 	for i in 4:
 		var bit := MeshInstance3D.new()
 		var box := BoxMesh.new()
@@ -2114,7 +2275,7 @@ func _splinters(parent: Node3D) -> Array:
 		bits.append(bit)
 	for row in cover:
 		if row["root"] == parent:
-			row["mats"].append(mat)
+			row["bits"] = bits
 			break
 	return bits
 
@@ -2125,42 +2286,94 @@ func _watch_tree(node: Node3D, key: String, scl: float) -> void:
 	if key == "pine_s" or key == "dead_s":
 		tall = 3.2
 		wide = 1.3
-	cover.append({
-		"root": node,
-		"mats": _own_fade(node),
-		"height": scl * tall,
-		"radius": scl * wide,
-		"alpha": 1.0,
-	})
-
-
-func _own_fade(node: Node) -> Array:
-	var found: Array = []
-	var meshes: Array = []
-	if node is MeshInstance3D:
-		meshes.append(node)
-	meshes.append_array(node.find_children("*", "MeshInstance3D", true, false))
+	var meshes: Array = _mesh_nodes(node)
 	for mesh in meshes:
 		var mi := mesh as MeshInstance3D
 		if mi == null:
 			continue
-		var mat := mi.get_surface_override_material(0) as StandardMaterial3D
-		if mat == null:
-			var base = mi.get_active_material(0)
-			if base is StandardMaterial3D:
-				mat = (base as StandardMaterial3D).duplicate() as StandardMaterial3D
-			else:
-				mat = StandardMaterial3D.new()
-				mat.albedo_color = Color(0.42, 0.34, 0.2)
-			mi.set_surface_override_material(0, mat)
+		mi.set_surface_override_material(0, _tree_mat(mi, key, 0))
+	cover.append({
+		"root": node,
+		"meshes": meshes,
+		"bits": [],
+		"key": key,
+		"height": scl * tall,
+		"radius": scl * wide,
+		"alpha": 1.0,
+		"bucket": 0,
+	})
+
+
+func _fade_step(alpha: float) -> int:
+	if alpha >= 0.97:
+		return 0
+	var span := clampf((alpha - 0.2) / 0.77, 0.0, 0.999)
+	return 1 + int(span * float(FADE_LEVELS))
+
+
+func _bucket_alpha(step: int) -> float:
+	if step <= 0:
+		return 1.0
+	return lerpf(0.2, 0.96, float(step - 1) / float(FADE_LEVELS - 1))
+
+
+func _tree_mat(mi: MeshInstance3D, key: String, bucket: int) -> Material:
+	var base: Material = mi.get_active_material(0)
+	var tex: Texture2D = null
+	var rough := 0.8
+	var color := Color(0.42, 0.34, 0.2)
+	if base is StandardMaterial3D:
+		var src := base as StandardMaterial3D
+		tex = src.albedo_texture
+		rough = src.roughness
+		color = src.albedo_color
+	var dye := "raw"
+	if key == "pine":
+		color = Color(0.22, 0.42, 0.16)
+		rough = 0.82
+		dye = "pine"
+	elif key == "pine_s":
+		color = Color(0.32, 0.5, 0.24)
+		rough = 0.82
+		dye = "pines"
+	var sig := "0"
+	if tex != null:
+		sig = str(tex.get_instance_id())
+	var id := "tree:%s:%s:%d" % [dye, sig, bucket]
+	if mats.has(id):
+		return mats[id]
+	var mat := StandardMaterial3D.new()
+	mat.albedo_texture = tex
+	mat.roughness = rough
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	var painted := color
+	if bucket <= 0:
+		painted.a = 1.0
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
+	else:
+		painted.a = _bucket_alpha(bucket)
 		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-		mat.cull_mode = BaseMaterial3D.CULL_DISABLED
-		var tint := mat.albedo_color
-		if tint.a < 0.05:
-			tint.a = 1.0
-			mat.albedo_color = tint
-		found.append(mat)
-	return found
+	mat.albedo_color = painted
+	mats[id] = mat
+	return mat
+
+
+func _splinter_mat(bucket: int) -> StandardMaterial3D:
+	var id := "splinter:%d" % bucket
+	if mats.has(id):
+		return mats[id] as StandardMaterial3D
+	var mat := StandardMaterial3D.new()
+	mat.roughness = 0.86
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	var color := Color(0.62, 0.44, 0.22, 1.0)
+	if bucket <= 0:
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
+	else:
+		color.a = _bucket_alpha(bucket)
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.albedo_color = color
+	mats[id] = mat
+	return mat
 
 
 func _clear_sight(dt: float) -> void:
@@ -2191,18 +2404,22 @@ func _clear_sight(dt: float) -> void:
 		var goal := 0.2 if block else 1.0
 		var alpha := lerpf(float(row["alpha"]), goal, blend)
 		row["alpha"] = alpha
-		for mat in row["mats"]:
-			var painted := mat as StandardMaterial3D
-			if painted == null:
+		var step := _fade_step(alpha)
+		if int(row["bucket"]) == step:
+			continue
+		row["bucket"] = step
+		var tree_key := str(row["key"])
+		for mesh in row["meshes"]:
+			var mi := mesh as MeshInstance3D
+			if mi == null or not is_instance_valid(mi):
 				continue
-			var color := painted.albedo_color
-			if alpha > 0.97:
-				painted.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
-				color.a = 1.0
-			else:
-				painted.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-				color.a = alpha
-			painted.albedo_color = color
+			mi.set_surface_override_material(0, _tree_mat(mi, tree_key, step))
+		var chips: Material = _splinter_mat(step)
+		for bit in row["bits"]:
+			var chip := bit as MeshInstance3D
+			if chip == null or not is_instance_valid(chip):
+				continue
+			chip.material_override = chips
 
 
 func _blocks(a: Vector3, b: Vector3, p: Vector3, radius: float) -> bool:
